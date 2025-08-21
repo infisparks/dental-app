@@ -1,258 +1,269 @@
-'use client';
+"use client"
 
-import { useState, useEffect, useRef } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Eye, Search, Calendar, Filter, CheckCircle, TrendingUp, CalendarDays, Pencil, ChevronDown } from 'lucide-react';
-import { subscribeToAppointments, type Appointment, updateAppointment, getAllAppointments, getAppointmentsByDate } from '@/lib/appointments';
-import { InvoiceModal } from './invoice-modal';
-import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, subDays, subWeeks, subMonths, subYears, parseISO, isValid } from 'date-fns';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { useUser } from '@/components/ui/UserContext';
+import { useState, useEffect, useRef } from "react"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/ui/badge"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Eye, Search, Calendar, Filter, CheckCircle, TrendingUp, CalendarDays, Pencil, ChevronDown } from "lucide-react"
+import {
+  subscribeToAppointments,
+  type Appointment,
+  updateAppointment,
+  getAllAppointments,
+  getAppointmentsByDate,
+} from "@/lib/appointments"
+import { InvoiceModal } from "./invoice-modal"
+import {
+  format,
+  startOfDay,
+  endOfDay,
+  startOfWeek,
+  endOfWeek,
+  startOfMonth,
+  endOfMonth,
+  startOfYear,
+  endOfYear,
+  parseISO,
+  isValid,
+} from "date-fns"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { useUser } from "@/components/ui/UserContext"
 
 export function AttendedAppointments() {
-  const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [filteredAppointments, setFilteredAppointments] = useState<Appointment[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
-  const [isInvoiceOpen, setIsInvoiceOpen] = useState(false);
-  const [dateFilter, setDateFilter] = useState('all');
-  const [specificDate, setSpecificDate] = useState('');
-  const [weekDate, setWeekDate] = useState('');
-  const [monthDate, setMonthDate] = useState('');
-  const [yearDate, setYearDate] = useState('');
-  const [isEditOpen, setIsEditOpen] = useState(false);
-  const [editData, setEditData] = useState<Appointment | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
-  const [doctorOptions, setDoctorOptions] = useState<string[]>([]);
-  const [serviceOptions, setServiceOptions] = useState<string[]>([]);
-  const [isServicesOpen, setIsServicesOpen] = useState(false);
-  const { role } = useUser();
-  const today = format(new Date(), 'yyyy-MM-dd');
-  const monthInputRef = useRef<HTMLInputElement>(null);
+  const [appointments, setAppointments] = useState<Appointment[]>([])
+  const [filteredAppointments, setFilteredAppointments] = useState<Appointment[]>([])
+  const [searchTerm, setSearchTerm] = useState("")
+  const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null)
+  const [isInvoiceOpen, setIsInvoiceOpen] = useState(false)
+  const [dateFilter, setDateFilter] = useState("all")
+  const [specificDate, setSpecificDate] = useState("")
+  const [weekDate, setWeekDate] = useState("")
+  const [monthDate, setMonthDate] = useState("")
+  const [yearDate, setYearDate] = useState("")
+  const [customStartDate, setCustomStartDate] = useState("")
+  const [customEndDate, setCustomEndDate] = useState("")
+  const [isCustomRangeModalOpen, setIsCustomRangeModalOpen] = useState(false)
+  const [isEditOpen, setIsEditOpen] = useState(false)
+  const [editData, setEditData] = useState<Appointment | null>(null)
+  const [isSaving, setIsSaving] = useState(false)
+  const [doctorOptions, setDoctorOptions] = useState<string[]>([])
+  const [serviceOptions, setServiceOptions] = useState<string[]>([])
+  const [isServicesOpen, setIsServicesOpen] = useState(false)
+  const { role } = useUser()
+  const today = format(new Date(), "yyyy-MM-dd")
+  const monthInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const unsubscribe = subscribeToAppointments((data) => {
-      const attendedAppointments = data.filter(apt => apt.status === 'completed');
-      setAppointments(attendedAppointments);
-      applyFilters(attendedAppointments, searchTerm, dateFilter, specificDate, weekDate, monthDate, yearDate);
-    });
+      const attendedAppointments = data.filter((apt) => apt.status === "completed")
+      setAppointments(attendedAppointments)
+      applyFilters(
+        attendedAppointments,
+        searchTerm,
+        dateFilter,
+        specificDate,
+        weekDate,
+        monthDate,
+        yearDate,
+        customStartDate,
+        customEndDate,
+      )
+    })
 
-    return () => unsubscribe();
-  }, []);
+    return () => unsubscribe()
+  }, [searchTerm, dateFilter, specificDate, weekDate, monthDate, yearDate, customStartDate, customEndDate])
 
   useEffect(() => {
     // Fetch unique doctors and services from all appointments
     getAllAppointments().then((appointments) => {
-      const doctorsSet = new Set<string>();
-      const servicesSet = new Set<string>();
-      appointments.forEach(apt => {
-        if (apt.doctor) doctorsSet.add(apt.doctor);
-        (apt.services || []).forEach(s => servicesSet.add(s));
-      });
-      setDoctorOptions(Array.from(doctorsSet));
-      setServiceOptions(Array.from(servicesSet));
-    });
-  }, []);
+      const doctorsSet = new Set<string>()
+      const servicesSet = new Set<string>()
+      appointments.forEach((apt) => {
+        if (apt.doctor) doctorsSet.add(apt.doctor)
+        ;(apt.services || []).forEach((s) => servicesSet.add(s))
+      })
+      setDoctorOptions(Array.from(doctorsSet))
+      setServiceOptions(Array.from(servicesSet))
+    })
+  }, [])
 
-  const applyFilters = (appointmentsList: Appointment[], search: string, filter: string, specDate?: string, weekDt?: string, monthDt?: string, yearDt?: string) => {
-    let filtered = appointmentsList;
+  const applyFilters = (
+    appointmentsList: Appointment[],
+    search: string,
+    filter: string,
+    specDate?: string,
+    weekDt?: string,
+    monthDt?: string,
+    yearDt?: string,
+    customStart?: string,
+    customEnd?: string,
+  ) => {
+    let filtered = appointmentsList
+    const now = new Date()
 
-    // Apply search filter
-    if (search) {
-      filtered = filtered.filter(apt =>
-        apt.patientName.toLowerCase().includes(search.toLowerCase())
-      );
-    }
-
-    // Apply date filter
-    const now = new Date();
-    switch (filter) {
-      case 'today':
-        if (specDate) {
-          const targetDate = parseISO(specDate);
+    // Staff role always filters by today's date
+    if (role === "staff") {
+      filtered = filtered.filter((apt) => format(parseISO(apt.appointmentDate), "yyyy-MM-dd") === today)
+    } else {
+      // Admin role filters by selected date filter
+      switch (filter) {
+        case "today":
+          const targetDate = specDate ? parseISO(specDate) : now
           if (isValid(targetDate)) {
-            filtered = filtered.filter(apt => {
-              const appointmentDate = new Date(apt.appointmentDate);
-              return appointmentDate >= startOfDay(targetDate) && appointmentDate <= endOfDay(targetDate);
-            });
+            filtered = filtered.filter((apt) => {
+              const appointmentDate = new Date(apt.appointmentDate)
+              return appointmentDate >= startOfDay(targetDate) && appointmentDate <= endOfDay(targetDate)
+            })
           }
-        } else {
-          // Default to today
-          filtered = filtered.filter(apt => {
-            const appointmentDate = new Date(apt.appointmentDate);
-            return appointmentDate >= startOfDay(now) && appointmentDate <= endOfDay(now);
-          });
-        }
-        break;
-      case 'week':
-        if (weekDt) {
-          const targetWeekDate = parseISO(weekDt);
+          break
+        case "week":
+          const targetWeekDate = weekDt ? parseISO(weekDt) : now
           if (isValid(targetWeekDate)) {
-            filtered = filtered.filter(apt => {
-              const appointmentDate = new Date(apt.appointmentDate);
-              return appointmentDate >= startOfWeek(targetWeekDate) && appointmentDate <= endOfWeek(targetWeekDate);
-            });
+            filtered = filtered.filter((apt) => {
+              const appointmentDate = new Date(apt.appointmentDate)
+              return appointmentDate >= startOfWeek(targetWeekDate) && appointmentDate <= endOfWeek(targetWeekDate)
+            })
           }
-        } else {
-          // Current week if no specific week selected
-          filtered = filtered.filter(apt => {
-            const appointmentDate = new Date(apt.appointmentDate);
-            return appointmentDate >= startOfWeek(now) && appointmentDate <= endOfWeek(now);
-          });
-        }
-        break;
-      case 'month':
-        if (monthDt) {
-          const targetMonthDate = parseISO(monthDt + '-01');
+          break
+        case "month":
+          const targetMonthDate = monthDt ? parseISO(monthDt + "-01") : now
           if (isValid(targetMonthDate)) {
-            filtered = filtered.filter(apt => {
-              const appointmentDate = new Date(apt.appointmentDate);
-              return appointmentDate >= startOfMonth(targetMonthDate) && appointmentDate <= endOfMonth(targetMonthDate);
-            });
+            filtered = filtered.filter((apt) => {
+              const appointmentDate = new Date(apt.appointmentDate)
+              return appointmentDate >= startOfMonth(targetMonthDate) && appointmentDate <= endOfMonth(targetMonthDate)
+            })
           }
-        } else {
-          // Current month if no specific month selected
-          filtered = filtered.filter(apt => {
-            const appointmentDate = new Date(apt.appointmentDate);
-            return appointmentDate >= startOfMonth(now) && appointmentDate <= endOfMonth(now);
-          });
-        }
-        break;
-      case 'year':
-        if (yearDt) {
-          const targetYearDate = parseISO(yearDt + '-01-01');
+          break
+        case "year":
+          const targetYearDate = yearDt ? parseISO(yearDt + "-01-01") : now
           if (isValid(targetYearDate)) {
-            filtered = filtered.filter(apt => {
-              const appointmentDate = new Date(apt.appointmentDate);
-              return appointmentDate >= startOfYear(targetYearDate) && appointmentDate <= endOfYear(targetYearDate);
-            });
+            filtered = filtered.filter((apt) => {
+              const appointmentDate = new Date(apt.appointmentDate)
+              return appointmentDate >= startOfYear(targetYearDate) && appointmentDate <= endOfYear(targetYearDate)
+            })
           }
-        } else {
-          // Current year if no specific year selected
-          filtered = filtered.filter(apt => {
-            const appointmentDate = new Date(apt.appointmentDate);
-            return appointmentDate >= startOfYear(now) && appointmentDate <= endOfYear(now);
-          });
-        }
-        break;
-      default:
-        // 'all' - no additional filtering
-        break;
+          break
+        case "custom":
+          if (customStart && customEnd) {
+            const startDate = parseISO(customStart)
+            const endDate = parseISO(customEnd)
+            if (isValid(startDate) && isValid(endDate)) {
+              filtered = filtered.filter((apt) => {
+                const appointmentDate = new Date(apt.appointmentDate)
+                return appointmentDate >= startOfDay(startDate) && appointmentDate <= endOfDay(endDate)
+              })
+            }
+          }
+          break
+        default:
+          break
+      }
     }
 
-    setFilteredAppointments(filtered);
-  };
-
-  useEffect(() => {
-    if (dateFilter === 'month') {
-      console.log('Selected monthDate:', monthDate);
-      const now = new Date();
-      const targetMonthDate = monthDate ? new Date(monthDate + '-01') : now;
-      const filtered = appointments.filter(apt => {
-        const appointmentDate = new Date(apt.appointmentDate);
-        const match = appointmentDate >= startOfMonth(targetMonthDate) && appointmentDate <= endOfMonth(targetMonthDate);
-        if (match) {
-          console.log('Matched appointment:', apt);
-        }
-        return match;
-      });
-      console.log('Filtered appointments for month:', filtered);
+    // Apply search filter to the result of the date filter
+    if (search) {
+      filtered = filtered.filter((apt) => apt.patientName.toLowerCase().includes(search.toLowerCase()))
     }
-    applyFilters(appointments, searchTerm, dateFilter, specificDate, weekDate, monthDate, yearDate);
-  }, [searchTerm, dateFilter, appointments, specificDate, weekDate, monthDate, yearDate]);
+
+    setFilteredAppointments(filtered)
+  }
 
   const handleViewInvoice = (appointment: Appointment) => {
-    setSelectedAppointment(appointment);
-    setIsInvoiceOpen(true);
-  };
+    setSelectedAppointment(appointment)
+    setIsInvoiceOpen(true)
+  }
 
   const handleEdit = async (appointment: Appointment) => {
     // Fetch the latest data from Firebase for this appointment
-    let baseAppointment = appointment;
+    let baseAppointment = appointment
     if (appointment.createdAt) {
-      const createdDate = new Date(appointment.createdAt);
-      const year = createdDate.getFullYear().toString();
-      const month = (createdDate.getMonth() + 1).toString().padStart(2, '0');
-      const day = createdDate.getDate().toString().padStart(2, '0');
-      const appointments = await getAppointmentsByDate(year, month, day);
-      const latest = appointments.find(a => a.id === appointment.id);
-      if (latest) baseAppointment = latest;
+      const createdDate = new Date(appointment.createdAt)
+      const year = createdDate.getFullYear().toString()
+      const month = (createdDate.getMonth() + 1).toString().padStart(2, "0")
+      const day = createdDate.getDate().toString().padStart(2, "0")
+      const appointments = await getAppointmentsByDate(year, month, day)
+      const latest = appointments.find((a) => a.id === appointment.id)
+      if (latest) baseAppointment = latest
     }
     // If payment object exists, use its values to auto-fill
-    let editObj = { ...baseAppointment };
+    const editObj = { ...baseAppointment }
     if (baseAppointment.payment) {
-      editObj.paymentMethod = baseAppointment.payment.paymentMethod;
-      editObj.cashAmount = baseAppointment.payment.cashAmount;
-      editObj.onlineAmount = baseAppointment.payment.onlineAmount;
+      editObj.paymentMethod = baseAppointment.payment.paymentMethod
+      editObj.cashAmount = baseAppointment.payment.cashAmount
+      editObj.onlineAmount = baseAppointment.payment.onlineAmount
     }
-    setEditData(editObj);
-    setIsEditOpen(true);
-  };
+    setEditData(editObj)
+    setIsEditOpen(true)
+  }
 
   const handleEditChange = (field: keyof Appointment, value: any) => {
-    if (!editData) return;
-    setEditData({ ...editData, [field]: value });
-  };
+    if (!editData) return
+    setEditData({ ...editData, [field]: value })
+  }
 
   const handleEditSave = async () => {
-    if (!editData) return;
-    setIsSaving(true);
+    if (!editData) return
+    setIsSaving(true)
     try {
       // Always update the payment object with the current values
       const payment = {
-        paymentMethod: editData.paymentMethod || '',
+        paymentMethod: editData.paymentMethod || "",
         cashAmount: editData.cashAmount || 0,
         onlineAmount: editData.onlineAmount || 0,
         createdAt: editData.payment?.createdAt || new Date().toISOString(),
-      };
+      }
       // Remove root payment fields to avoid sending undefined
-      const { paymentMethod, cashAmount, onlineAmount, ...rest } = editData;
+      const { paymentMethod, cashAmount, onlineAmount, ...rest } = editData
       await updateAppointment(editData.id!, {
         ...rest,
         payment,
-      });
-      setIsEditOpen(false);
+      })
+      setIsEditOpen(false)
     } catch (e) {
-      alert('Failed to update appointment');
+      alert("Failed to update appointment")
     } finally {
-      setIsSaving(false);
+      setIsSaving(false)
     }
-  };
+  }
 
   // Helper to get the total paid amount for an appointment
   const getPaidAmount = (apt: Appointment) => {
     if (apt.payment) {
-      return (apt.payment.cashAmount || 0) + (apt.payment.onlineAmount || 0);
+      return (apt.payment.cashAmount || 0) + (apt.payment.onlineAmount || 0)
     }
-    return (apt.cashAmount || 0) + (apt.onlineAmount || 0);
-  };
+    return (apt.cashAmount || 0) + (apt.onlineAmount || 0)
+  }
 
   const getTotalAmount = () => {
-    return filteredAppointments.reduce((sum, apt) => sum + getPaidAmount(apt), 0);
-  };
+    return filteredAppointments.reduce((sum, apt) => sum + getPaidAmount(apt), 0)
+  }
 
   const resetDateInputs = () => {
-    setSpecificDate('');
-    setWeekDate('');
-    setMonthDate('');
-    setYearDate('');
-  };
+    setSpecificDate("")
+    setWeekDate("")
+    setMonthDate("")
+    setYearDate("")
+    setCustomStartDate("")
+    setCustomEndDate("")
+  }
 
   const handleFilterChange = (value: string) => {
-    setDateFilter(value);
-    resetDateInputs();
-  };
+    setDateFilter(value)
+    resetDateInputs()
+    if (value === "custom") {
+      setIsCustomRangeModalOpen(true)
+    }
+  }
 
-  const paymentMethods = ['Cash', 'Online', 'Cash+Online'];
+  const handleCustomRangeApply = () => {
+    if (customStartDate && customEndDate) {
+      setIsCustomRangeModalOpen(false)
+    }
+  }
 
-  // Filter data for staff to only today's attended appointments
-  const filteredAttended = role === 'staff'
-    ? appointments.filter(a => format(new Date(a.appointmentDate), 'yyyy-MM-dd') === today)
-    : appointments;
+  const paymentMethods = ["Cash", "Online", "Cash+Online"]
 
   return (
     <div className="space-y-6 px-1 md:px-0 max-w-7xl mx-auto w-full">
@@ -264,33 +275,40 @@ export function AttendedAppointments() {
                 <CheckCircle className="h-6 w-6 text-teal-700" />
               </div>
               <div>
-                <CardTitle className="text-xl md:text-2xl text-blue-900 font-extrabold tracking-tight">Attended Appointments</CardTitle>
-                <p className="text-blue-600 text-sm md:text-base font-medium">View completed appointments with advanced filtering</p>
+                <CardTitle className="text-xl md:text-2xl text-blue-900 font-extrabold tracking-tight">
+                  Attended Appointments
+                </CardTitle>
+                <p className="text-blue-600 text-sm md:text-base font-medium">
+                  View completed appointments with advanced filtering
+                </p>
               </div>
             </div>
-            {/* Only show search bar, date filter, and revenue box for admin */}
-            {role !== 'staff' && (
+            {/* Show total revenue box for admin only */}
+            {role !== "staff" && (
               <div className="flex items-center gap-2 bg-gradient-to-r from-teal-100 to-blue-100 px-4 py-2 rounded-xl shadow-sm">
                 <TrendingUp className="h-5 w-5 text-teal-600" />
                 <div className="text-right">
                   <div className="text-xs md:text-sm text-teal-700 font-semibold">Total Revenue</div>
-                  <div className="text-base md:text-lg font-bold text-blue-900">₹{getTotalAmount().toLocaleString()}</div>
+                  <div className="text-base md:text-lg font-bold text-blue-900">
+                    ₹{getTotalAmount().toLocaleString()}
+                  </div>
                 </div>
               </div>
             )}
           </div>
           {/* Search and Filter Controls */}
-          {role !== 'staff' && (
-            <div className="flex flex-col md:flex-row gap-4 mt-4">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-3 h-4 w-4 text-blue-400" />
-                <Input
-                  placeholder="Search by patient name..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10 border-blue-200 focus:border-teal-400 focus:ring-teal-300 rounded-xl text-sm md:text-base bg-gradient-to-r from-white to-blue-50"
-                />
-              </div>
+          <div className="flex flex-col md:flex-row gap-4 mt-4">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-3 h-4 w-4 text-blue-400" />
+              <Input
+                placeholder="Search by patient name..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 border-blue-200 focus:border-teal-400 focus:ring-teal-300 rounded-xl text-sm md:text-base bg-gradient-to-r from-white to-blue-50"
+              />
+            </div>
+            {/* Only show date filter for admin, not staff */}
+            {role !== "staff" && (
               <div className="flex items-center gap-2">
                 <Filter className="h-4 w-4 text-blue-400" />
                 <Select value={dateFilter} onValueChange={handleFilterChange}>
@@ -303,15 +321,16 @@ export function AttendedAppointments() {
                     <SelectItem value="week">Week Wise</SelectItem>
                     <SelectItem value="month">Month Wise</SelectItem>
                     <SelectItem value="year">Year Wise</SelectItem>
+                    <SelectItem value="custom">Custom Range</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-            </div>
-          )}
+            )}
+          </div>
           {/* Advanced Date Filter Inputs */}
-          {role !== 'staff' && (
+          {role !== "staff" && (
             <div className="flex flex-wrap gap-4 mt-4">
-              {dateFilter === 'today' && (
+              {dateFilter === "today" && (
                 <div className="flex items-center gap-2">
                   <CalendarDays className="h-4 w-4 text-teal-600" />
                   <Input
@@ -324,7 +343,7 @@ export function AttendedAppointments() {
                   <span className="text-xs md:text-sm text-blue-500">Select specific date</span>
                 </div>
               )}
-              {dateFilter === 'week' && (
+              {dateFilter === "week" && (
                 <div className="flex items-center gap-2">
                   <CalendarDays className="h-4 w-4 text-teal-600" />
                   <Input
@@ -337,7 +356,7 @@ export function AttendedAppointments() {
                   <span className="text-xs md:text-sm text-blue-500">Select any date in the week</span>
                 </div>
               )}
-              {dateFilter === 'month' && (
+              {dateFilter === "month" && (
                 <div className="flex items-center gap-2">
                   <CalendarDays className="h-4 w-4 text-teal-600" />
                   <div className="relative">
@@ -353,7 +372,11 @@ export function AttendedAppointments() {
                       type="button"
                       tabIndex={-1}
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-blue-400 hover:text-blue-600 focus:outline-none"
-                      onClick={() => monthInputRef.current && monthInputRef.current.showPicker ? monthInputRef.current.showPicker() : monthInputRef.current?.focus()}
+                      onClick={() =>
+                        monthInputRef.current && monthInputRef.current.showPicker
+                          ? monthInputRef.current.showPicker()
+                          : monthInputRef.current?.focus()
+                      }
                     >
                       <Calendar className="h-5 w-5" />
                     </button>
@@ -361,7 +384,7 @@ export function AttendedAppointments() {
                   <span className="text-xs md:text-sm text-blue-500">Select month and year</span>
                 </div>
               )}
-              {dateFilter === 'year' && (
+              {dateFilter === "year" && (
                 <div className="flex items-center gap-2">
                   <CalendarDays className="h-4 w-4 text-teal-600" />
                   <Input
@@ -376,15 +399,41 @@ export function AttendedAppointments() {
                   <span className="text-xs md:text-sm text-blue-500">Enter year (e.g., 2024)</span>
                 </div>
               )}
+              {dateFilter === "custom" && customStartDate && customEndDate && (
+                <div className="flex items-center gap-2">
+                  <CalendarDays className="h-4 w-4 text-teal-600" />
+                  <div className="flex items-center gap-2 bg-gradient-to-r from-white to-blue-50 px-3 py-2 rounded-xl border border-blue-200">
+                    <span className="text-xs md:text-sm text-blue-700 font-medium">
+                      {format(parseISO(customStartDate), "MMM dd, yyyy")} -{" "}
+                      {format(parseISO(customEndDate), "MMM dd, yyyy")}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setIsCustomRangeModalOpen(true)}
+                      className="text-xs px-2 py-1 h-6 border-blue-300 text-blue-600 hover:bg-blue-50"
+                    >
+                      Change
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
           {/* Filter Summary */}
-          {role !== 'staff' && dateFilter !== 'all' && (
+          {role !== "staff" && dateFilter !== "all" && (
             <div className="mt-2 p-3 bg-gradient-to-r from-teal-50 to-blue-50 rounded-xl border border-blue-100">
               <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2">
-                {dateFilter === 'today' && (
+                {dateFilter === "today" && (
                   <div className="text-xs md:text-sm text-blue-700">
-                    <strong>Active Filter:</strong> Date: {format(specificDate ? parseISO(specificDate) : new Date(), 'PPP')}
+                    <strong>Active Filter:</strong> Date:{" "}
+                    {format(specificDate ? parseISO(specificDate) : new Date(), "PPP")}
+                  </div>
+                )}
+                {dateFilter === "custom" && customStartDate && customEndDate && (
+                  <div className="text-xs md:text-sm text-blue-700">
+                    <strong>Active Filter:</strong> Custom Range: {format(parseISO(customStartDate), "PPP")} -{" "}
+                    {format(parseISO(customEndDate), "PPP")}
                   </div>
                 )}
                 <div className="text-xs md:text-sm font-medium text-blue-600">
@@ -413,7 +462,7 @@ export function AttendedAppointments() {
                 </tr>
               </thead>
               <tbody>
-                {(role === 'staff' ? filteredAttended : filteredAppointments).map((appointment, index) => (
+                {filteredAppointments.map((appointment, index) => (
                   <tr key={appointment.id} className="border-b hover:bg-blue-50 transition-colors">
                     <td className="p-3">{index + 1}</td>
                     <td className="p-3 font-medium text-blue-900">{appointment.patientName}</td>
@@ -424,10 +473,14 @@ export function AttendedAppointments() {
                     <td className="p-3">
                       <div className="flex flex-wrap gap-1">
                         {appointment.services?.map((service, idx) => (
-                          <Badge key={idx} variant="outline" className="text-xs bg-blue-100 text-blue-700 border-blue-200">
+                          <Badge
+                            key={idx}
+                            variant="outline"
+                            className="text-xs bg-blue-100 text-blue-700 border-blue-200"
+                          >
                             {service}
                           </Badge>
-                        )) || 'N/A'}
+                        )) || "N/A"}
                       </div>
                     </td>
                     <td className="p-3">
@@ -469,7 +522,7 @@ export function AttendedAppointments() {
                 ))}
               </tbody>
             </table>
-            {filteredAttended.length === 0 && (
+            {filteredAppointments.length === 0 && (
               <div className="text-center py-8 text-blue-400">
                 <div className="flex flex-col items-center gap-2">
                   <Calendar className="h-12 w-12 text-blue-200" />
@@ -481,56 +534,145 @@ export function AttendedAppointments() {
           </div>
         </CardContent>
       </Card>
-      <InvoiceModal
-        isOpen={isInvoiceOpen}
-        onClose={() => setIsInvoiceOpen(false)}
-        appointment={selectedAppointment}
-      />
+
+      {/* Custom Range Modal */}
+      <Dialog open={isCustomRangeModalOpen} onOpenChange={setIsCustomRangeModalOpen}>
+        <DialogContent className="max-w-md bg-gradient-to-br from-white to-blue-50 border-0 rounded-2xl shadow-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold text-blue-900 flex items-center gap-2">
+              <CalendarDays className="h-5 w-5 text-teal-600" />
+              Custom Date Range
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-4">
+            <div>
+              <label className="block text-sm font-semibold text-blue-700 mb-2">Starting Date</label>
+              <Input
+                type="date"
+                value={customStartDate}
+                onChange={(e) => setCustomStartDate(e.target.value)}
+                className="w-full border-blue-200 focus:border-teal-400 focus:ring-teal-300 rounded-xl bg-gradient-to-r from-white to-blue-50"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-blue-700 mb-2">Ending Date</label>
+              <Input
+                type="date"
+                value={customEndDate}
+                onChange={(e) => setCustomEndDate(e.target.value)}
+                className="w-full border-blue-200 focus:border-teal-400 focus:ring-teal-300 rounded-xl bg-gradient-to-r from-white to-blue-50"
+              />
+            </div>
+            {customStartDate && customEndDate && (
+              <div className="p-3 bg-gradient-to-r from-teal-50 to-blue-50 rounded-xl border border-blue-100">
+                <div className="text-xs text-blue-700">
+                  <strong>Selected Range:</strong> {format(parseISO(customStartDate), "PPP")} -{" "}
+                  {format(parseISO(customEndDate), "PPP")}
+                </div>
+              </div>
+            )}
+            <div className="flex justify-end gap-2 pt-4">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setIsCustomRangeModalOpen(false)
+                  setDateFilter("all")
+                }}
+                className="border-blue-200 text-blue-600 hover:bg-blue-50 rounded-xl"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleCustomRangeApply}
+                disabled={!customStartDate || !customEndDate}
+                className="bg-gradient-to-r from-teal-500 to-blue-500 hover:from-teal-600 hover:to-blue-600 text-white font-semibold rounded-xl shadow-md"
+              >
+                Apply Filter
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <InvoiceModal isOpen={isInvoiceOpen} onClose={() => setIsInvoiceOpen(false)} appointment={selectedAppointment} />
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
         <DialogContent className="max-w-xl bg-gradient-to-br from-white to-amber-50 border-0 rounded-2xl shadow-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-2xl font-bold text-amber-700 mb-2">Edit Appointment</DialogTitle>
           </DialogHeader>
           {editData && (
-            <form className="space-y-4" onSubmit={e => { e.preventDefault(); handleEditSave(); }}>
+            <form
+              className="space-y-4"
+              onSubmit={(e) => {
+                e.preventDefault()
+                handleEditSave()
+              }}
+            >
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Patient Name</label>
-                  <input className="w-full rounded-lg border border-amber-200 px-3 py-2 focus:ring-amber-400 focus:border-amber-400" value={editData.patientName} onChange={e => handleEditChange('patientName', e.target.value)} />
+                  <input
+                    className="w-full rounded-lg border border-amber-200 px-3 py-2 focus:ring-amber-400 focus:border-amber-400"
+                    value={editData.patientName}
+                    onChange={(e) => handleEditChange("patientName", e.target.value)}
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Age</label>
-                  <input type="number" className="w-full rounded-lg border border-amber-200 px-3 py-2 focus:ring-amber-400 focus:border-amber-400" value={editData.age} onChange={e => handleEditChange('age', Number(e.target.value))} />
+                  <input
+                    type="number"
+                    className="w-full rounded-lg border border-amber-200 px-3 py-2 focus:ring-amber-400 focus:border-amber-400"
+                    value={editData.age}
+                    onChange={(e) => handleEditChange("age", Number(e.target.value))}
+                  />
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Gender</label>
-                  <input className="w-full rounded-lg border border-amber-200 px-3 py-2 focus:ring-amber-400 focus:border-amber-400" value={editData.gender} onChange={e => handleEditChange('gender', e.target.value)} />
+                  <input
+                    className="w-full rounded-lg border border-amber-200 px-3 py-2 focus:ring-amber-400 focus:border-amber-400"
+                    value={editData.gender}
+                    onChange={(e) => handleEditChange("gender", e.target.value)}
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Contact Number</label>
-                  <input className="w-full rounded-lg border border-amber-200 px-3 py-2 focus:ring-amber-400 focus:border-amber-400" value={editData.contactNumber} onChange={e => handleEditChange('contactNumber', e.target.value)} />
+                  <input
+                    className="w-full rounded-lg border border-amber-200 px-3 py-2 focus:ring-amber-400 focus:border-amber-400"
+                    value={editData.contactNumber}
+                    onChange={(e) => handleEditChange("contactNumber", e.target.value)}
+                  />
                 </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Doctor</label>
-                <select className="w-full rounded-lg border border-amber-200 px-3 py-2 focus:ring-amber-400 focus:border-amber-400" value={editData.doctor} onChange={e => handleEditChange('doctor', e.target.value)}>
+                <select
+                  className="w-full rounded-lg border border-amber-200 px-3 py-2 focus:ring-amber-400 focus:border-amber-400"
+                  value={editData.doctor}
+                  onChange={(e) => handleEditChange("doctor", e.target.value)}
+                >
                   <option value="">Select doctor</option>
-                  {doctorOptions.map(doc => <option key={doc} value={doc}>{doc}</option>)}
+                  {doctorOptions.map((doc) => (
+                    <option key={doc} value={doc}>
+                      {doc}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Services (Multiple selection allowed)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Services (Multiple selection allowed)
+                </label>
                 <div className="relative mt-1">
                   <button
                     type="button"
                     onClick={() => setIsServicesOpen(!isServicesOpen)}
-                    className={`w-full flex items-center justify-between px-3 py-2 border rounded-md bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-amber-500 ${!editData.services?.length ? 'border-amber-300' : 'border-amber-400'}`}
+                    className={`w-full flex items-center justify-between px-3 py-2 border rounded-md bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-amber-500 ${!editData.services?.length ? "border-amber-300" : "border-amber-400"}`}
                   >
                     <span className="text-gray-700">
                       {editData.services?.length === 0
-                        ? 'Select services...'
+                        ? "Select services..."
                         : `${editData.services.length} service(s) selected`}
                     </span>
                     <ChevronDown className="h-4 w-4 text-amber-400" />
@@ -546,14 +688,14 @@ export function AttendedAppointments() {
                             <input
                               type="checkbox"
                               checked={editData.services?.includes(service) || false}
-                              onChange={e => {
-                                let updated = editData.services ? [...editData.services] : [];
+                              onChange={(e) => {
+                                let updated = editData.services ? [...editData.services] : []
                                 if (e.target.checked) {
-                                  updated.push(service);
+                                  updated.push(service)
                                 } else {
-                                  updated = updated.filter(s => s !== service);
+                                  updated = updated.filter((s) => s !== service)
                                 }
-                                handleEditChange('services', updated);
+                                handleEditChange("services", updated)
                               }}
                               className="rounded border-amber-300 text-amber-600 focus:ring-amber-500"
                             />
@@ -567,7 +709,10 @@ export function AttendedAppointments() {
                 {editData.services && editData.services.length > 0 && (
                   <div className="mt-2 p-2 bg-amber-50 rounded-lg flex flex-wrap gap-2">
                     {editData.services.map((service) => (
-                      <span key={service} className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                      <span
+                        key={service}
+                        className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800"
+                      >
                         {service}
                       </span>
                     ))}
@@ -576,7 +721,10 @@ export function AttendedAppointments() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
-                <Select value={editData.paymentMethod || ''} onValueChange={val => handleEditChange('paymentMethod', val)}>
+                <Select
+                  value={editData.paymentMethod || ""}
+                  onValueChange={(val) => handleEditChange("paymentMethod", val)}
+                >
                   <SelectTrigger className="mt-1 border-amber-300 focus:border-amber-500">
                     <SelectValue placeholder="Select payment method" />
                   </SelectTrigger>
@@ -587,38 +735,67 @@ export function AttendedAppointments() {
                   </SelectContent>
                 </Select>
               </div>
-              {editData.paymentMethod === 'cash' && (
+              {editData.paymentMethod === "cash" && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Cash Amount</label>
-                  <Input type="number" value={editData.cashAmount || ''} onChange={e => handleEditChange('cashAmount', Number(e.target.value))} />
+                  <Input
+                    type="number"
+                    value={editData.cashAmount || ""}
+                    onChange={(e) => handleEditChange("cashAmount", Number(e.target.value))}
+                  />
                 </div>
               )}
-              {editData.paymentMethod === 'online' && (
+              {editData.paymentMethod === "online" && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Online Amount</label>
-                  <Input type="number" value={editData.onlineAmount || ''} onChange={e => handleEditChange('onlineAmount', Number(e.target.value))} />
+                  <Input
+                    type="number"
+                    value={editData.onlineAmount || ""}
+                    onChange={(e) => handleEditChange("onlineAmount", Number(e.target.value))}
+                  />
                 </div>
               )}
-              {editData.paymentMethod === 'cash+online' && (
+              {editData.paymentMethod === "cash+online" && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Cash Amount</label>
-                    <Input type="number" value={editData.cashAmount || ''} onChange={e => handleEditChange('cashAmount', Number(e.target.value))} />
+                    <Input
+                      type="number"
+                      value={editData.cashAmount || ""}
+                      onChange={(e) => handleEditChange("cashAmount", Number(e.target.value))}
+                    />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Online Amount</label>
-                    <Input type="number" value={editData.onlineAmount || ''} onChange={e => handleEditChange('onlineAmount', Number(e.target.value))} />
+                    <Input
+                      type="number"
+                      value={editData.onlineAmount || ""}
+                      onChange={(e) => handleEditChange("onlineAmount", Number(e.target.value))}
+                    />
                   </div>
                 </div>
               )}
               <div className="flex justify-end gap-2 mt-4">
-                <Button type="button" variant="ghost" onClick={() => setIsEditOpen(false)} className="bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-lg">Cancel</Button>
-                <Button type="submit" className="bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-lg shadow-md" disabled={isSaving}>{isSaving ? 'Saving...' : 'Save Changes'}</Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setIsEditOpen(false)}
+                  className="bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-lg"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  className="bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-lg shadow-md"
+                  disabled={isSaving}
+                >
+                  {isSaving ? "Saving..." : "Save Changes"}
+                </Button>
               </div>
             </form>
           )}
         </DialogContent>
       </Dialog>
     </div>
-  );
+  )
 }

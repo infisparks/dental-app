@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Menu, X, Calendar, DollarSign, Eye, LogOut, Stethoscope, BarChart } from 'lucide-react';
 import { logout } from '@/lib/auth';
 import { useRouter, usePathname } from 'next/navigation';
+import Image from 'next/image'; // Import the Next.js Image component
 
 interface SidebarProps {
   activeSection: string;
@@ -62,20 +63,23 @@ export function Sidebar({ activeSection, onSectionChange, userRole }: SidebarPro
         )}
       >
         <div className="flex flex-col h-full">
-          {/* Logo and clinic name + Desktop sidebar toggle button */}
+          {/* Logo Image Section */}
           <div className={cn(
-            'flex items-center gap-3 p-6 border-b border-gray-200 transition-all duration-300',
-            collapsed ? 'justify-center p-4' : ''
+            'flex items-center border-b border-gray-200 transition-all duration-300 h-[105px]', // Set a fixed height to prevent layout shifts
+            collapsed ? 'justify-center' : 'p-6 justify-start'
           )}>
-            <div className="flex items-center justify-center w-12 h-12 bg-blue-100 rounded-lg">
-              <Stethoscope className="h-6 w-6 text-blue-600" />
-            </div>
-            {!collapsed && (
-              <div className="flex items-center gap-2">
-                <div>
-                  <h1 className="text-lg font-semibold text-gray-900">Dental Clinic</h1>
-                  <p className="text-sm text-gray-500">Management System</p>
-                </div>
+            {!collapsed ? (
+              <Image
+                src="/images/medora.png" // Path from the public directory
+                alt="Medora Clinic Logo"
+                width={180}
+                height={60}
+                priority // Preload the logo for better performance
+                className="object-contain"
+              />
+            ) : (
+              <div className="flex items-center justify-center w-12 h-12 bg-blue-100 rounded-lg">
+                <Stethoscope className="h-6 w-6 text-blue-600" />
               </div>
             )}
           </div>
@@ -113,7 +117,7 @@ export function Sidebar({ activeSection, onSectionChange, userRole }: SidebarPro
                     "w-full justify-start gap-3 h-12 transition-all duration-300 border-0",
                     isActive
                       ? "bg-blue-600 text-white hover:bg-blue-700"
-                      : "bg-blue-50 text-blue-700 hover:bg-blue-100 hover:text-blue-800", // Adjusted for visible white text on a subtle background
+                      : "bg-blue-50 text-blue-700 hover:bg-blue-100 hover:text-blue-800",
                     collapsed ? 'justify-center px-0' : ''
                   )}
                   onClick={() => {
