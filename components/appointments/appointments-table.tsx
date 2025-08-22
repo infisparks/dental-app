@@ -173,6 +173,9 @@ export function AppointmentsTable() {
           paymentMethod: paymentData.paymentMethod,
           cashAmount: paymentData.cashAmount,
           onlineAmount: paymentData.onlineAmount,
+          discountAmount: paymentData.discountAmount,
+          cashType: paymentData.cashType,
+          onlineType: paymentData.onlineType,
           createdAt: paymentData.createdAt,
         },
       })
