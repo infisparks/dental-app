@@ -20,6 +20,7 @@ interface InvoiceModalProps {
 export function InvoiceModal({ isOpen, onClose, appointment }: InvoiceModalProps) {
   const [totalServiceCharge, setTotalServiceCharge] = useState(0)
   const [totalAmountPaid, setTotalAmountPaid] = useState(0)
+  const [discountAmount, setDiscountAmount] = useState(0)
   const [paymentMethod, setPaymentMethod] = useState("")
   const [remainingAmount, setRemainingAmount] = useState(0)
   const [serviceCharges, setServiceCharges] = useState<Record<string, number>>({})
@@ -64,17 +65,20 @@ export function InvoiceModal({ isOpen, onClose, appointment }: InvoiceModalProps
 
       let totalPaid = 0
       let method = ""
+      let discount = 0
       if (paymentSnapshot.exists()) {
         const paymentData = paymentSnapshot.val()
         const cashAmount = Number(paymentData.cashAmount) || 0
         const onlineAmount = Number(paymentData.onlineAmount) || 0
         totalPaid = cashAmount + onlineAmount
         method = paymentData.paymentMethod || ""
+        discount = Number(paymentData.discountAmount) || 0
       }
       setTotalAmountPaid(totalPaid)
       setPaymentMethod(method)
+      setDiscountAmount(discount)
 
-      setRemainingAmount(totalService - totalPaid)
+      setRemainingAmount(totalService - discount - totalPaid)
     } catch (error) {
       console.error("Error fetching Firebase data:", error)
     }
@@ -224,6 +228,12 @@ export function InvoiceModal({ isOpen, onClose, appointment }: InvoiceModalProps
                   <span>Total Service Charge:</span>
                   <span className="font-medium">₹{totalServiceCharge}</span>
                 </div>
+                {discountAmount > 0 && (
+                  <div className="flex justify-between py-1">
+                    <span>Discount Amount:</span>
+                    <span className="font-medium text-orange-600">₹{discountAmount}</span>
+                  </div>
+                )}
                 <div className="flex justify-between py-1">
                   <span>Total Amount Paid:</span>
                   <div className="flex flex-col items-end">

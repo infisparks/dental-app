@@ -25,11 +25,17 @@ import {
   endOfMonth,
   startOfYear,
   endOfYear,
-  parseISO,
   isValid,
 } from "date-fns"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useUser } from "@/components/ui/UserContext"
+
+// Extended type for editing appointments with payment fields at root level
+type AppointmentWithPaymentFields = Appointment & {
+  discountAmount?: number
+  cashType?: string
+  onlineType?: string
+}
 
 export function AttendedAppointments() {
   const [appointments, setAppointments] = useState<Appointment[]>([])
@@ -46,7 +52,7 @@ export function AttendedAppointments() {
   const [customEndDate, setCustomEndDate] = useState("")
   const [isCustomRangeModalOpen, setIsCustomRangeModalOpen] = useState(false)
   const [isEditOpen, setIsEditOpen] = useState(false)
-  const [editData, setEditData] = useState<Appointment | null>(null)
+  const [editData, setEditData] = useState<AppointmentWithPaymentFields | null>(null)
   const [isSaving, setIsSaving] = useState(false)
   const [doctorOptions, setDoctorOptions] = useState<string[]>([])
   const [serviceOptions, setServiceOptions] = useState<string[]>([])
@@ -105,12 +111,12 @@ export function AttendedAppointments() {
 
     // Staff role always filters by today's date
     if (role === "staff") {
-      filtered = filtered.filter((apt) => format(parseISO(apt.appointmentDate), "yyyy-MM-dd") === today)
+      filtered = filtered.filter((apt) => format(new Date(apt.appointmentDate), "yyyy-MM-dd") === today)
     } else {
       // Admin role filters by selected date filter
       switch (filter) {
         case "today":
-          const targetDate = specDate ? parseISO(specDate) : now
+          const targetDate = specDate ? new Date(specDate) : now
           if (isValid(targetDate)) {
             filtered = filtered.filter((apt) => {
               const appointmentDate = new Date(apt.appointmentDate)
@@ -119,7 +125,7 @@ export function AttendedAppointments() {
           }
           break
         case "week":
-          const targetWeekDate = weekDt ? parseISO(weekDt) : now
+          const targetWeekDate = weekDt ? new Date(weekDt) : now
           if (isValid(targetWeekDate)) {
             filtered = filtered.filter((apt) => {
               const appointmentDate = new Date(apt.appointmentDate)
@@ -128,7 +134,7 @@ export function AttendedAppointments() {
           }
           break
         case "month":
-          const targetMonthDate = monthDt ? parseISO(monthDt + "-01") : now
+          const targetMonthDate = monthDt ? new Date(monthDt + "-01") : now
           if (isValid(targetMonthDate)) {
             filtered = filtered.filter((apt) => {
               const appointmentDate = new Date(apt.appointmentDate)
@@ -137,7 +143,7 @@ export function AttendedAppointments() {
           }
           break
         case "year":
-          const targetYearDate = yearDt ? parseISO(yearDt + "-01-01") : now
+          const targetYearDate = yearDt ? new Date(yearDt + "-01-01") : now
           if (isValid(targetYearDate)) {
             filtered = filtered.filter((apt) => {
               const appointmentDate = new Date(apt.appointmentDate)
@@ -147,8 +153,8 @@ export function AttendedAppointments() {
           break
         case "custom":
           if (customStart && customEnd) {
-            const startDate = parseISO(customStart)
-            const endDate = parseISO(customEnd)
+            const startDate = new Date(customStart)
+            const endDate = new Date(customEnd)
             if (isValid(startDate) && isValid(endDate)) {
               filtered = filtered.filter((apt) => {
                 const appointmentDate = new Date(apt.appointmentDate)
@@ -188,17 +194,20 @@ export function AttendedAppointments() {
       if (latest) baseAppointment = latest
     }
     // If payment object exists, use its values to auto-fill
-    const editObj = { ...baseAppointment }
+    const editObj = { ...baseAppointment } as AppointmentWithPaymentFields
     if (baseAppointment.payment) {
       editObj.paymentMethod = baseAppointment.payment.paymentMethod
       editObj.cashAmount = baseAppointment.payment.cashAmount
       editObj.onlineAmount = baseAppointment.payment.onlineAmount
+      editObj.discountAmount = baseAppointment.payment.discountAmount
+      editObj.cashType = baseAppointment.payment.cashType
+      editObj.onlineType = baseAppointment.payment.onlineType
     }
     setEditData(editObj)
     setIsEditOpen(true)
   }
 
-  const handleEditChange = (field: keyof Appointment, value: any) => {
+  const handleEditChange = (field: keyof AppointmentWithPaymentFields, value: any) => {
     if (!editData) return
     setEditData({ ...editData, [field]: value })
   }
@@ -212,10 +221,13 @@ export function AttendedAppointments() {
         paymentMethod: editData.paymentMethod || "",
         cashAmount: editData.cashAmount || 0,
         onlineAmount: editData.onlineAmount || 0,
+        discountAmount: editData.discountAmount || 0,
+        cashType: editData.cashType || "",
+        onlineType: editData.onlineType || "",
         createdAt: editData.payment?.createdAt || new Date().toISOString(),
       }
       // Remove root payment fields to avoid sending undefined
-      const { paymentMethod, cashAmount, onlineAmount, ...rest } = editData
+      const { paymentMethod, cashAmount, onlineAmount, discountAmount, cashType, onlineType, ...rest } = editData as AppointmentWithPaymentFields
       await updateAppointment(editData.id!, {
         ...rest,
         payment,
@@ -404,8 +416,8 @@ export function AttendedAppointments() {
                   <CalendarDays className="h-4 w-4 text-teal-600" />
                   <div className="flex items-center gap-2 bg-gradient-to-r from-white to-blue-50 px-3 py-2 rounded-xl border border-blue-200">
                     <span className="text-xs md:text-sm text-blue-700 font-medium">
-                      {format(parseISO(customStartDate), "MMM dd, yyyy")} -{" "}
-                      {format(parseISO(customEndDate), "MMM dd, yyyy")}
+                      {format(new Date(customStartDate), "MMM dd, yyyy")} -{" "}
+                      {format(new Date(customEndDate), "MMM dd, yyyy")}
                     </span>
                     <Button
                       size="sm"
@@ -427,13 +439,13 @@ export function AttendedAppointments() {
                 {dateFilter === "today" && (
                   <div className="text-xs md:text-sm text-blue-700">
                     <strong>Active Filter:</strong> Date:{" "}
-                    {format(specificDate ? parseISO(specificDate) : new Date(), "PPP")}
+                    {format(specificDate ? new Date(specificDate) : new Date(), "PPP")}
                   </div>
                 )}
                 {dateFilter === "custom" && customStartDate && customEndDate && (
                   <div className="text-xs md:text-sm text-blue-700">
-                    <strong>Active Filter:</strong> Custom Range: {format(parseISO(customStartDate), "PPP")} -{" "}
-                    {format(parseISO(customEndDate), "PPP")}
+                    <strong>Active Filter:</strong> Custom Range: {format(new Date(customStartDate), "PPP")} -{" "}
+                    {format(new Date(customEndDate), "PPP")}
                   </div>
                 )}
                 <div className="text-xs md:text-sm font-medium text-blue-600">
@@ -456,7 +468,7 @@ export function AttendedAppointments() {
                   <th className="text-left p-3 font-semibold text-blue-900">Doctor</th>
                   <th className="text-left p-3 font-semibold text-blue-900">Services</th>
                   <th className="text-left p-3 font-semibold text-blue-900">Date & Time</th>
-                  <th className="text-left p-3 font-semibold text-blue-900">Amount</th>
+                  <th className="text-left p-3 font-semibold text-blue-900">Paid Amount</th>
                   <th className="text-left p-3 font-semibold text-blue-900">Status</th>
                   <th className="text-left p-3 font-semibold text-blue-900">Actions</th>
                 </tr>
@@ -566,8 +578,8 @@ export function AttendedAppointments() {
             {customStartDate && customEndDate && (
               <div className="p-3 bg-gradient-to-r from-teal-50 to-blue-50 rounded-xl border border-blue-100">
                 <div className="text-xs text-blue-700">
-                  <strong>Selected Range:</strong> {format(parseISO(customStartDate), "PPP")} -{" "}
-                  {format(parseISO(customEndDate), "PPP")}
+                  <strong>Selected Range:</strong> {format(new Date(customStartDate), "PPP")} -{" "}
+                  {format(new Date(customEndDate), "PPP")}
                 </div>
               </div>
             )}
@@ -735,46 +747,40 @@ export function AttendedAppointments() {
                   </SelectContent>
                 </Select>
               </div>
-              {editData.paymentMethod === "cash" && (
+              {(editData.paymentMethod === "cash" || editData.paymentMethod === "cash+online") && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Cash Amount</label>
                   <Input
                     type="number"
                     value={editData.cashAmount || ""}
                     onChange={(e) => handleEditChange("cashAmount", Number(e.target.value))}
+                    placeholder="Enter cash amount"
+                    className="border-amber-300 focus:border-amber-500"
                   />
                 </div>
               )}
-              {editData.paymentMethod === "online" && (
+              {(editData.paymentMethod === "online" || editData.paymentMethod === "cash+online") && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Online Amount</label>
                   <Input
                     type="number"
                     value={editData.onlineAmount || ""}
                     onChange={(e) => handleEditChange("onlineAmount", Number(e.target.value))}
+                    placeholder="Enter online amount"
+                    className="border-amber-300 focus:border-amber-500"
                   />
                 </div>
               )}
-              {editData.paymentMethod === "cash+online" && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Cash Amount</label>
-                    <Input
-                      type="number"
-                      value={editData.cashAmount || ""}
-                      onChange={(e) => handleEditChange("cashAmount", Number(e.target.value))}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Online Amount</label>
-                    <Input
-                      type="number"
-                      value={editData.onlineAmount || ""}
-                      onChange={(e) => handleEditChange("onlineAmount", Number(e.target.value))}
-                    />
-                  </div>
-                </div>
-              )}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Discount Amount</label>
+                <Input
+                  type="number"
+                  value={editData.discountAmount || ""}
+                  onChange={(e) => handleEditChange("discountAmount", Number(e.target.value))}
+                  placeholder="Enter discount amount"
+                  className="border-amber-300 focus:border-amber-500"
+                />
+              </div>
               <div className="flex justify-end gap-2 mt-4">
                 <Button
                   type="button"
