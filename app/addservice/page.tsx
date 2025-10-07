@@ -12,39 +12,19 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { AlertCircle, Plus, Edit, Trash2, Check, X, Clock } from "lucide-react"
 
-// --- CONSOLIDATED FIREBASE IMPORTS AND SETUP ---
-import { initializeApp } from "firebase/app"
-import { getDatabase, ref, push, set, get, onValue, off, remove } from "firebase/database"
-import { getAuth } from "firebase/auth"
-import { getAnalytics } from "firebase/analytics"
-
-// NOTE: Using the provided configuration
-const firebaseConfig = {
-    apiKey: "AIzaSyBaTeRtmiV1lGgptTK_TMwB-6lD04vkg3w",
-    authDomain: "dental-clinic-4f741.firebaseapp.com",
-    databaseURL: "https://dental-clinic-4f741-default-rtdb.firebaseio.com",
-    projectId: "dental-clinic-4f741",
-    storageBucket: "dental-clinic-4f741.firebasestorage.app",
-    messagingSenderId: "56058745204",
-    appId: "1:56058745204:web:b58eee5e8e9ad136f95c21",
-    measurementId: "G-G6VSRL30Q9"
-};
-
-const app = initializeApp(firebaseConfig);
-export const database = getDatabase(app);
+// --- CONSOLIDATED FIREBASE IMPORTS AND SETUP (MOVED TO lib/firebase) ---
+// Import only the necessary items from the centralized file
+import { database, ref, set, onValue, off, remove, ServiceItem } from "@/lib/firebase" // ASSUMING lib/firebase.ts path
 
 // --- INTERFACE DEFINITIONS ---
-export interface ServiceItem {
-  name: string
-  charge: number
-}
+// Use the interface exported from the firebase file
 type EditingState = {
     isEditing: boolean,
     originalName: string,
     currentPrice: number
 }
 
-// --- UTILITY FUNCTIONS FOR DYNAMIC DATA (CONSOLIDATED FROM /lib/database) ---
+// --- UTILITY FUNCTIONS FOR DYNAMIC DATA (REFACTORED) ---
 
 /**
  * Utility to get the slug for Firebase key
@@ -58,6 +38,11 @@ const getServiceSlug = (name: string) => {
  * Path: /services_master/
  */
 const subscribeToServicesMaster = (callback: (services: ServiceItem[]) => void) => {
+    // Check if database is initialized before subscribing
+    if (!database) {
+        console.error("Firebase database not available.")
+        return () => {}
+    }
     const servicesRef = ref(database, "services_master")
 
     const listener = onValue(servicesRef, (snapshot) => {
@@ -66,10 +51,11 @@ const subscribeToServicesMaster = (callback: (services: ServiceItem[]) => void) 
         if (snapshot.exists()) {
             const servicesData = snapshot.val()
             Object.values(servicesData || {}).forEach((data: any) => {
+                // Ensure data structure matches ServiceItem
                 if (data && typeof data.name === 'string' && typeof data.price === 'number') {
                     services.push({
                         name: data.name,
-                        charge: data.price,
+                        charge: data.price, // Assuming 'price' in DB maps to 'charge' in interface
                     })
                 }
             })
@@ -87,6 +73,7 @@ const subscribeToServicesMaster = (callback: (services: ServiceItem[]) => void) 
  * Saves or updates a service.
  */
 const updateOrCreateService = async (serviceName: string, price: number) => {
+    if (!database) throw new Error("Database not available")
     try {
       const slug = getServiceSlug(serviceName)
       const serviceRef = ref(database, `services_master/${slug}`)
@@ -106,6 +93,7 @@ const updateOrCreateService = async (serviceName: string, price: number) => {
  * Deletes a service.
  */
 const deleteService = async (serviceName: string) => {
+    if (!database) throw new Error("Database not available")
     try {
       const slug = getServiceSlug(serviceName)
       const serviceRef = ref(database, `services_master/${slug}`)
