@@ -1,8 +1,7 @@
 "use client"
 
 import type React from "react"
-
-import { useState } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -14,11 +13,172 @@ import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { toast } from "sonner"
-import { addAppointment } from "@/lib/appointments"
-import { format } from "date-fns"
-import { ChevronDown, CalendarIcon, User, Phone, MapPin, Stethoscope, AlertCircle, Clock } from "lucide-react"
+// Import necessary format functions from date-fns
+import { format, getHours, getMinutes } from "date-fns" 
+import { ChevronDown, CalendarIcon, User, Phone, MapPin, Stethoscope, AlertCircle, Clock, FileText } from "lucide-react" // Added FileText icon
 import { useRouter } from "next/navigation"
 import { useUser } from "@/components/ui/UserContext"
+
+// --- CONSOLIDATED FIREBASE IMPORTS AND SETUP ---
+import { initializeApp } from "firebase/app"
+import { getDatabase, ref, push, set, get, onValue, off, remove } from "firebase/database"
+import { getAuth } from "firebase/auth"
+import { getAnalytics } from "firebase/analytics"
+
+// NOTE: Using the provided configuration
+const firebaseConfig = {
+    apiKey: "AIzaSyBaTeRtmiV1lGgptTK_TMwB-6lD04vkg3w",
+    authDomain: "dental-clinic-4f741.firebaseapp.com",
+    databaseURL: "https://dental-clinic-4f741-default-rtdb.firebaseio.com",
+    projectId: "dental-clinic-4f741",
+    storageBucket: "dental-clinic-4f741.firebasestorage.app",
+    messagingSenderId: "56058745204",
+    appId: "1:56058745204:web:b58eee5e8e9ad136f95c21",
+    measurementId: "G-G6VSRL30Q9"
+};
+
+const app = initializeApp(firebaseConfig);
+export const database = getDatabase(app);
+
+// --- INTERFACE DEFINITIONS ---
+
+export interface ServiceItem {
+  name: string
+  charge: number
+}
+
+// UPDATED: Added optional 'note' field
+export interface Appointment {
+  id?: string
+  patientName: string
+  age: number
+  gender: string
+  contactNumber: string
+  email?: string
+  address: string
+  doctor: string
+  services: string[]
+  serviceCharges: { [service: string]: number }
+  appointmentDate: string
+  appointmentTime: string
+  status: "pending" | "completed"
+  paymentMethod?: string
+  cashAmount?: number
+  onlineAmount?: number
+  totalAmount?: number
+  createdAt: string
+  updatedAt?: string
+  note?: string // NEW FIELD
+  payment?: {
+    paymentMethod: string
+    cashAmount: number
+    onlineAmount: number
+    discountAmount?: number
+    cashType?: string
+    onlineType?: string
+    createdAt: string
+  }
+}
+
+// --- UTILITY FUNCTIONS FOR DYNAMIC DATA (CONSOLIDATED FROM /lib/database) ---
+
+/**
+ * Fetches the list of doctors from the database.
+ * Path: /doctor/
+ * In the provided structure, it only contains a single name under 'name'.
+ * We will return an array containing that single name.
+ */
+const getDoctors = async (): Promise<string[]> => {
+  try {
+    const doctorRef = ref(database, "doctor")
+    const snapshot = await get(doctorRef)
+
+    if (!snapshot.exists()) {
+      return []
+    }
+
+    const doctorData = snapshot.val()
+    
+    // Based on structure: { "doctor": { "name": "DR Mudassir" } }
+    if (doctorData && typeof doctorData.name === 'string') {
+      return [doctorData.name]
+    }
+
+    return []
+  } catch (error) {
+    console.error("Error fetching doctors:", error)
+    return []
+  }
+}
+
+/**
+ * Fetches the clean list of services and their charges from the new /services_master path
+ * that the AddServicePage is using for better management.
+ */
+const getServicesMaster = async (): Promise<ServiceItem[]> => {
+  try {
+    const servicesRef = ref(database, "services_master")
+    const snapshot = await get(servicesRef)
+
+    if (!snapshot.exists()) {
+      return []
+    }
+
+    const servicesData = snapshot.val()
+    const services: ServiceItem[] = []
+
+    Object.values(servicesData || {}).forEach((data: any) => {
+      if (data && typeof data.name === 'string' && typeof data.price === 'number') {
+        services.push({
+          name: data.name,
+          charge: data.price,
+        })
+      }
+    })
+
+    return services.sort((a, b) => a.name.localeCompare(b.name))
+  } catch (error) {
+    console.error("Error fetching master services:", error)
+    return []
+  }
+}
+
+// Helper function to get date parts
+const getDateParts = (date: Date) => {
+    return {
+      year: date.getFullYear().toString(),
+      month: (date.getMonth() + 1).toString().padStart(2, "0"),
+      day: date.getDate().toString().padStart(2, "0"),
+    }
+}
+
+// Add a new appointment (CONSOLIDATED from /lib/appointments)
+export const addAppointment = async (appointment: Omit<Appointment, "id">) => {
+    try {
+      const now = new Date()
+      const { year, month, day } = getDateParts(now)
+
+      const appointmentsRef = ref(database, `appointments/${year}/${month}/${day}`)
+      const newAppointmentRef = push(appointmentsRef)
+
+      const appointmentData = {
+        ...appointment,
+        status: "pending" as const,
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        // Note is included here
+      }
+
+      await set(newAppointmentRef, appointmentData)
+      return newAppointmentRef.key
+    } catch (error) {
+      console.error("Error adding appointment:", error)
+      throw error
+    }
+}
+
+
+// --- ZOD Schema ---
 
 const appointmentSchema = z.object({
   patientName: z
@@ -46,32 +206,53 @@ const appointmentSchema = z.object({
   services: z.array(z.string()).min(1, "Please select at least one service"),
   appointmentDate: z.string().min(1, "Please select appointment date"),
   appointmentTime: z.string().min(1, "Please select appointment time"),
+  note: z.string().max(300, "Note must be less than 300 characters").optional(), // NEW FIELD IN SCHEMA
 })
 
 type AppointmentFormData = z.infer<typeof appointmentSchema>
 
-const doctors = ["Dr. Mudassir Shaikh", "Dr. Moin Zariwala", "Dr. Daanish Shaikh", "Dr. Kamlesh Bhondu"]
+// --- New Utility to get Current Time for Default Value ---
+const getCurrentTime12hr = (date: Date) => {
+    // Round minutes up to the nearest quarter hour (0, 15, 30, 45) for better UX
+    const minutes = date.getMinutes();
+    const roundedMinutes = Math.ceil(minutes / 15) * 15;
 
-const services = [
-  { name: "Teeth Cleaning", charge: 1500 },
-  { name: "Root Canal", charge: 8000 },
-  { name: "Teeth Extraction", charge: 2000 },
-  { name: "Dental Fillings", charge: 3000 },
-  { name: "Dental Crown", charge: 12000 },
-  { name: "Teeth Whitening", charge: 5000 },
-  { name: "Orthodontic Treatment", charge: 25000 },
-  { name: "Dental Implant", charge: 35000 },
-]
+    // Add minutes to the date object
+    const roundedDate = new Date(date.getTime() + (roundedMinutes - minutes) * 60000);
 
-export function AppointmentForm() {
+    // Format as "HH:mm AA" (e.g., "08:15 AM")
+    return format(roundedDate, "hh:mm a");
+}
+
+export default function AppointmentForm() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [selectedServices, setSelectedServices] = useState<string[]>([])
   const [isServicesOpen, setIsServicesOpen] = useState(false)
   const [serviceCharges, setServiceCharges] = useState<{ [service: string]: number }>({})
   const [isTimePickerOpen, setIsTimePickerOpen] = useState(false)
-  const [selectedHour, setSelectedHour] = useState(10)
-  const [selectedMinute, setSelectedMinute] = useState(0)
-  const [selectedPeriod, setSelectedPeriod] = useState<"AM" | "PM">("AM")
+  
+  const initialDate = new Date();
+
+  // Set initial selected time state based on current time (rounded to nearest 15 min)
+  const initialHours = getHours(initialDate);
+  const initialMinutes = getMinutes(initialDate);
+  const roundedInitialMinutes = Math.ceil(initialMinutes / 15) * 15;
+  const initialTimeRounded = new Date(initialDate.getTime() + (roundedInitialMinutes - initialMinutes) * 60000);
+
+  // Convert 24hr to 12hr for state
+  let initialHour12 = getHours(initialTimeRounded) % 12;
+  initialHour12 = initialHour12 === 0 ? 12 : initialHour12;
+  const initialPeriod = getHours(initialTimeRounded) >= 12 ? "PM" : "AM";
+  
+  const [selectedHour, setSelectedHour] = useState(initialHour12)
+  const [selectedMinute, setSelectedMinute] = useState(getMinutes(initialTimeRounded))
+  const [selectedPeriod, setSelectedPeriod] = useState<"AM" | "PM">(initialPeriod)
+
+  // --- Dynamic State ---
+  const [doctors, setDoctors] = useState<string[]>([])
+  const [services, setServices] = useState<ServiceItem[]>([])
+  const [isLoadingData, setIsLoadingData] = useState(true)
+  // ---------------------
 
   const {
     register,
@@ -84,16 +265,47 @@ export function AppointmentForm() {
   } = useForm<AppointmentFormData>({
     resolver: zodResolver(appointmentSchema),
     defaultValues: {
-      appointmentDate: format(new Date(), "yyyy-MM-dd"),
-      appointmentTime: "10:00 AM",
+      appointmentDate: format(initialDate, "yyyy-MM-dd"),
+      appointmentTime: getCurrentTime12hr(initialDate), 
       services: [],
       contactNumber: "+91",
+      doctor: "",
+      note: "", // NEW DEFAULT VALUE
     },
     mode: "onChange",
   })
 
   const router = useRouter()
-  const { role } = useUser()
+  // Assuming useUser is available, otherwise comment it out
+  // const { role } = useUser() 
+
+  // --- Dynamic Data Fetching Effect ---
+  useEffect(() => {
+    const fetchDynamicData = async () => {
+      try {
+        const [fetchedDoctors, fetchedServices] = await Promise.all([
+          getDoctors(),
+          getServicesMaster(),
+        ])
+        setDoctors(fetchedDoctors)
+        setServices(fetchedServices)
+        
+        // If only one doctor, set it as default
+        if (fetchedDoctors.length === 1) {
+            setValue("doctor", fetchedDoctors[0])
+        }
+
+      } catch (error) {
+        toast.error("Failed to load doctors or services data.")
+        console.error("Error loading dynamic data:", error)
+      } finally {
+        setIsLoadingData(false)
+      }
+    }
+
+    fetchDynamicData()
+  }, [setValue])
+  // ------------------------------------
 
   const handleServiceChange = (serviceName: string, charge: number, checked: boolean) => {
     let updatedServices
@@ -111,9 +323,9 @@ export function AppointmentForm() {
     trigger("services")
   }
 
-  const getTotalServiceCharge = () => {
+  const getTotalServiceCharge = useCallback(() => {
     return Object.values(serviceCharges).reduce((sum, charge) => sum + charge, 0)
-  }
+  }, [serviceCharges])
 
   const onSubmit = async (data: AppointmentFormData) => {
     setIsSubmitting(true)
@@ -123,12 +335,14 @@ export function AppointmentForm() {
         age: Number(data.age),
         email: data.email || "",
         address: data.address || "",
+        note: data.note || "", // NEW: Include note in the data payload
         services: selectedServices,
         serviceCharges,
         status: "pending",
-        createdAt: "",
+        createdAt: "", // Placeholder, will be set in addAppointment
       })
 
+      // --- WhatsApp Notification Logic ---
       const patientName = data.patientName
       const appointmentDate = data.appointmentDate
       const appointmentTime = data.appointmentTime
@@ -139,9 +353,10 @@ export function AppointmentForm() {
         .join("\n")
       const totalCharge = getTotalServiceCharge()
 
-      const message = `*MEDORA Dental Clinic*\n\n*Appointment Confirmation*\n\nDear *${patientName}*,\n\nYour appointment has been *successfully booked* with us.\n\n*Details:*\n*Date:* ${appointmentDate}\n*Time:* ${appointmentTime}\n*Doctor:* ${doctor}\n*Services:*\n${selectedServiceList}\n\n*Total Estimated Charge:* ₹${totalCharge}\n\nThank you for choosing *MEDORA*. We look forward to seeing you!\n\nIf you have any questions, reply to this message.`
+      const message = `*MEDORA Dental Clinic*\n\n*Appointment Confirmation*\n\nDear *${patientName}*,\n\nYour appointment has been *successfully booked* with us.\n\n*Details:*\n*Date:* ${appointmentDate}\n*Time:* ${appointmentTime}\n*Doctor:* ${doctor}\n*Services:*\n${selectedServiceList}\n\n*Total Estimated Charge:* ₹${totalCharge}\n\nThank you for choosing *MEDORA*. We look forward to seeing you!\n\n${data.note ? `*Note for Doctor:* ${data.note}\n\n` : ''}If you have any questions, reply to this message.`
 
       try {
+        // NOTE: Ensure this endpoint is secure and correct
         await fetch("https://wa.medblisss.com/send-text", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -156,15 +371,33 @@ export function AppointmentForm() {
       }
 
       toast.success("Appointment booked successfully!")
+      // Reset form with current date and time
+      const resetDate = new Date();
       reset({
-        appointmentDate: format(new Date(), "yyyy-MM-dd"),
-        appointmentTime: "10:00 AM",
+        appointmentDate: format(resetDate, "yyyy-MM-dd"),
+        appointmentTime: getCurrentTime12hr(resetDate),
         services: [],
         contactNumber: "+91",
+        doctor: doctors.length === 1 ? doctors[0] : "", // Reset doctor to default if only one
+        note: "", // NEW: Reset note field
       })
       setSelectedServices([])
       setServiceCharges({})
-      router.push("/appointment-table")
+      // Reset time picker state to match new reset time
+      const resetHours = getHours(resetDate);
+      const resetMinutes = getMinutes(resetDate);
+      const resetRoundedMinutes = Math.ceil(resetMinutes / 15) * 15;
+      const resetTimeRounded = new Date(resetDate.getTime() + (resetRoundedMinutes - resetMinutes) * 60000);
+
+      let resetHour12 = getHours(resetTimeRounded) % 12;
+      resetHour12 = resetHour12 === 0 ? 12 : resetHour12;
+      const resetPeriod = getHours(resetTimeRounded) >= 12 ? "PM" : "AM";
+
+      setSelectedHour(resetHour12);
+      setSelectedMinute(getMinutes(resetTimeRounded));
+      setSelectedPeriod(resetPeriod);
+      
+      // router.push("/appointment-table") // Commented out redirection for simple app view
     } catch (error) {
       console.error("Error booking appointment:", error)
       toast.error("Failed to book appointment. Please try again.")
@@ -185,12 +418,9 @@ export function AppointmentForm() {
 
   const handleContactNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = e.target.value
-    if (!value.startsWith("+91")) {
-      value = "+91" + value.replace(/^\+91/, "").replace(/\D/g, "").slice(0, 10)
-    } else {
-      value = "+91" + value.replace(/^\+91/, "").replace(/\D/g, "").slice(0, 10)
-    }
-    setValue("contactNumber", value, { shouldValidate: true })
+    // Enforce +91 prefix and limit to 10 digits
+    const cleanedValue = value.replace(/^\+91/, "").replace(/\D/g, "").slice(0, 10)
+    setValue("contactNumber", "+91" + cleanedValue, { shouldValidate: true })
   }
 
   const handleTimeSelect = () => {
@@ -203,6 +433,16 @@ export function AppointmentForm() {
   const formatDisplayTime = (time: string) => {
     return time || "Select time"
   }
+  
+  if (isLoadingData) {
+    return (
+        <Card className="max-w-2xl mx-auto shadow-xl border-0 bg-gradient-to-br from-white to-blue-50">
+            <CardHeader><CardTitle className="text-xl">Loading Clinic Data...</CardTitle></CardHeader>
+            <CardContent className="text-gray-600">Fetching doctors and services from database. Please wait...</CardContent>
+        </Card>
+    );
+  }
+
 
   return (
     <Card className="max-w-2xl mx-auto shadow-xl border-0 bg-gradient-to-br from-white to-blue-50">
@@ -263,6 +503,7 @@ export function AppointmentForm() {
                   setValue("gender", value)
                   trigger("gender")
                 }}
+                value={watch("gender")}
               >
                 <SelectTrigger
                   className={`mt-1 ${errors.gender ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"}`}
@@ -317,12 +558,29 @@ export function AppointmentForm() {
             <Textarea
               id="address"
               {...register("address")}
-              placeholder="Enter complete address (minimum 10 characters)"
+              placeholder="Enter complete address"
               className={`mt-1 ${errors.address ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"} focus:ring-blue-500`}
               rows={3}
             />
             {renderFieldError(errors.address)}
           </div>
+
+          {/* NEW NOTE FIELD */}
+          <div>
+            <Label htmlFor="note" className="flex items-center gap-2 text-gray-700 font-medium">
+              <FileText className="h-4 w-4" />
+              Note for Doctor / Patient Request (Optional)
+            </Label>
+            <Textarea
+              id="note"
+              {...register("note")}
+              placeholder="e.g., Patient is very nervous, or requested a specific procedure."
+              className={`mt-1 ${errors.note ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"} focus:ring-blue-500`}
+              rows={3}
+            />
+            {renderFieldError(errors.note)}
+          </div>
+          {/* END NEW NOTE FIELD */}
 
           <div>
             <Label htmlFor="doctor" className="flex items-center gap-2 text-gray-700 font-medium">
@@ -334,6 +592,7 @@ export function AppointmentForm() {
                 setValue("doctor", value)
                 trigger("doctor")
               }}
+              value={watch("doctor")}
             >
               <SelectTrigger
                 className={`mt-1 ${errors.doctor ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"}`}
@@ -386,6 +645,9 @@ export function AppointmentForm() {
                       <span className="text-sm font-medium text-green-600">₹{service.charge}</span>
                     </label>
                   ))}
+                  {services.length === 0 && (
+                      <div className="p-3 text-sm text-center text-gray-500">No services found. Add some services first.</div>
+                  )}
                 </div>
               )}
             </div>
@@ -524,10 +786,15 @@ export function AppointmentForm() {
           <Button
             type="submit"
             className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-medium py-3 rounded-lg shadow-lg hover:shadow-xl transition-all duration-200"
-            disabled={isSubmitting}
+            disabled={isSubmitting || isLoadingData || doctors.length === 0 || services.length === 0}
           >
             {isSubmitting ? "Booking Appointment..." : "Book Appointment"}
           </Button>
+          {(doctors.length === 0 || services.length === 0) && (
+              <div className="text-center text-sm text-yellow-600 flex items-center justify-center gap-1 mt-2">
+                <AlertCircle className="h-4 w-4"/> Services or Doctors data missing. Cannot book.
+              </div>
+          )}
         </form>
       </CardContent>
     </Card>

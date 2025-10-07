@@ -1,6 +1,6 @@
 "use client";
 import { Sidebar } from '@/components/ui/sidebar';
-import { AppointmentForm } from '@/components/appointments/appointment-form';
+import  AppointmentForm  from '@/components/appointments/appointment-form';
 import { useUser } from '@/components/ui/UserContext';
 import { useState } from 'react';
 
