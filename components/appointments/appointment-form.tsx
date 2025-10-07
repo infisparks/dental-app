@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react" // Import useRef
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -15,39 +15,21 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { toast } from "sonner"
 // Import necessary format functions from date-fns
 import { format, getHours, getMinutes } from "date-fns" 
-import { ChevronDown, CalendarIcon, User, Phone, MapPin, Stethoscope, AlertCircle, Clock, FileText } from "lucide-react" // Added FileText icon
+import { ChevronDown, CalendarIcon, User, Phone, MapPin, Stethoscope, AlertCircle, Clock, FileText, Search } from "lucide-react" 
 import { useRouter } from "next/navigation"
 import { useUser } from "@/components/ui/UserContext"
 
-// --- CONSOLIDATED FIREBASE IMPORTS AND SETUP ---
-import { initializeApp } from "firebase/app"
-import { getDatabase, ref, push, set, get, onValue, off, remove } from "firebase/database"
-import { getAuth } from "firebase/auth"
-import { getAnalytics } from "firebase/analytics"
+// --- FIREBASE IMPORTS AND SETUP ---
+// NOTE: Assuming this file is placed where it can access the shared Firebase setup.
+import { database, ref, push, set, get } from "@/lib/firebase" 
 
-// NOTE: Using the provided configuration
-const firebaseConfig = {
-    apiKey: "AIzaSyBaTeRtmiV1lGgptTK_TMwB-6lD04vkg3w",
-    authDomain: "dental-clinic-4f741.firebaseapp.com",
-    databaseURL: "https://dental-clinic-4f741-default-rtdb.firebaseio.com",
-    projectId: "dental-clinic-4f741",
-    storageBucket: "dental-clinic-4f741.firebasestorage.app",
-    messagingSenderId: "56058745204",
-    appId: "1:56058745204:web:b58eee5e8e9ad136f95c21",
-    measurementId: "G-G6VSRL30Q9"
-};
-
-const app = initializeApp(firebaseConfig);
-export const database = getDatabase(app);
-
-// --- INTERFACE DEFINITIONS ---
+// --- INTERFACE DEFINITIONS (Duplicated here for context, ensure it matches lib/firebase.ts) ---
 
 export interface ServiceItem {
   name: string
   charge: number
 }
 
-// UPDATED: Added optional 'note' field
 export interface Appointment {
   id?: string
   patientName: string
@@ -68,7 +50,7 @@ export interface Appointment {
   totalAmount?: number
   createdAt: string
   updatedAt?: string
-  note?: string // NEW FIELD
+  note?: string 
   payment?: {
     paymentMethod: string
     cashAmount: number
@@ -80,13 +62,10 @@ export interface Appointment {
   }
 }
 
-// --- UTILITY FUNCTIONS FOR DYNAMIC DATA (CONSOLIDATED FROM /lib/database) ---
+// --- UTILITY FUNCTIONS FOR DYNAMIC DATA ---
 
 /**
- * Fetches the list of doctors from the database.
- * Path: /doctor/
- * In the provided structure, it only contains a single name under 'name'.
- * We will return an array containing that single name.
+ * Fetches the list of doctors from the database, handling the array structure.
  */
 const getDoctors = async (): Promise<string[]> => {
   try {
@@ -99,7 +78,14 @@ const getDoctors = async (): Promise<string[]> => {
 
     const doctorData = snapshot.val()
     
-    // Based on structure: { "doctor": { "name": "DR Mudassir" } }
+    // Logic to handle Firebase array structure: [null, {name: 'Ayesha Khan'}, {name: 'Asra Khan'}]
+    if (Array.isArray(doctorData)) {
+        return doctorData
+            .map((item: any) => item?.name) 
+            .filter((name: string | undefined) => typeof name === 'string' && name.trim() !== '') as string[]
+    }
+    
+    // Fallback for simple object structure
     if (doctorData && typeof doctorData.name === 'string') {
       return [doctorData.name]
     }
@@ -113,7 +99,6 @@ const getDoctors = async (): Promise<string[]> => {
 
 /**
  * Fetches the clean list of services and their charges from the new /services_master path
- * that the AddServicePage is using for better management.
  */
 const getServicesMaster = async (): Promise<ServiceItem[]> => {
   try {
@@ -137,7 +122,8 @@ const getServicesMaster = async (): Promise<ServiceItem[]> => {
     })
 
     return services.sort((a, b) => a.name.localeCompare(b.name))
-  } catch (error) {
+  } catch (error)
+ {
     console.error("Error fetching master services:", error)
     return []
   }
@@ -152,7 +138,7 @@ const getDateParts = (date: Date) => {
     }
 }
 
-// Add a new appointment (CONSOLIDATED from /lib/appointments)
+// Add a new appointment
 export const addAppointment = async (appointment: Omit<Appointment, "id">) => {
     try {
       const now = new Date()
@@ -166,7 +152,6 @@ export const addAppointment = async (appointment: Omit<Appointment, "id">) => {
         status: "pending" as const,
         createdAt: now.toISOString(),
         updatedAt: now.toISOString(),
-        // Note is included here
       }
 
       await set(newAppointmentRef, appointmentData)
@@ -206,12 +191,12 @@ const appointmentSchema = z.object({
   services: z.array(z.string()).min(1, "Please select at least one service"),
   appointmentDate: z.string().min(1, "Please select appointment date"),
   appointmentTime: z.string().min(1, "Please select appointment time"),
-  note: z.string().max(300, "Note must be less than 300 characters").optional(), // NEW FIELD IN SCHEMA
+  note: z.string().max(300, "Note must be less than 300 characters").optional(),
 })
 
 type AppointmentFormData = z.infer<typeof appointmentSchema>
 
-// --- New Utility to get Current Time for Default Value ---
+// --- Utility to get Current Time for Default Value ---
 const getCurrentTime12hr = (date: Date) => {
     // Round minutes up to the nearest quarter hour (0, 15, 30, 45) for better UX
     const minutes = date.getMinutes();
@@ -230,16 +215,19 @@ export default function AppointmentForm() {
   const [isServicesOpen, setIsServicesOpen] = useState(false)
   const [serviceCharges, setServiceCharges] = useState<{ [service: string]: number }>({})
   const [isTimePickerOpen, setIsTimePickerOpen] = useState(false)
+  const [serviceSearchTerm, setServiceSearchTerm] = useState("") 
   
+  // Ref for the service dropdown area
+  const serviceDropdownRef = useRef<HTMLDivElement>(null); 
+
   const initialDate = new Date();
 
-  // Set initial selected time state based on current time (rounded to nearest 15 min)
+  // Time picker state initialization
   const initialHours = getHours(initialDate);
   const initialMinutes = getMinutes(initialDate);
   const roundedInitialMinutes = Math.ceil(initialMinutes / 15) * 15;
   const initialTimeRounded = new Date(initialDate.getTime() + (roundedInitialMinutes - initialMinutes) * 60000);
 
-  // Convert 24hr to 12hr for state
   let initialHour12 = getHours(initialTimeRounded) % 12;
   initialHour12 = initialHour12 === 0 ? 12 : initialHour12;
   const initialPeriod = getHours(initialTimeRounded) >= 12 ? "PM" : "AM";
@@ -251,7 +239,8 @@ export default function AppointmentForm() {
   // --- Dynamic State ---
   const [doctors, setDoctors] = useState<string[]>([])
   const [services, setServices] = useState<ServiceItem[]>([])
-  const [isLoadingData, setIsLoadingData] = useState(true)
+  // Form loads immediately, data is fetched in background
+  const [isLoadingData, setIsLoadingData] = useState(true) 
   // ---------------------
 
   const {
@@ -270,16 +259,15 @@ export default function AppointmentForm() {
       services: [],
       contactNumber: "+91",
       doctor: "",
-      note: "", // NEW DEFAULT VALUE
+      note: "",
     },
     mode: "onChange",
   })
 
   const router = useRouter()
-  // Assuming useUser is available, otherwise comment it out
   // const { role } = useUser() 
 
-  // --- Dynamic Data Fetching Effect ---
+  // --- Dynamic Data Fetching Effect (In Background) ---
   useEffect(() => {
     const fetchDynamicData = async () => {
       try {
@@ -306,6 +294,34 @@ export default function AppointmentForm() {
     fetchDynamicData()
   }, [setValue])
   // ------------------------------------
+
+  // --- EFFECT TO HIDE DROPDOWN ON OUTSIDE CLICK ---
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      // Check if the click is outside the entire service dropdown area
+      if (serviceDropdownRef.current && !serviceDropdownRef.current.contains(event.target as Node)) {
+        setIsServicesOpen(false);
+        setServiceSearchTerm(''); // Optional: clear search on close
+      }
+    }
+
+    if (isServicesOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    } else {
+      document.removeEventListener("mousedown", handleClickOutside);
+    }
+
+    // Cleanup the event listener on component unmount or when dropdown closes
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isServicesOpen]);
+  // --------------------------------------------------
+
+  // Filter services based on search term
+  const filteredServices = services.filter(service =>
+      service.name.toLowerCase().includes(serviceSearchTerm.toLowerCase())
+  )
 
   const handleServiceChange = (serviceName: string, charge: number, checked: boolean) => {
     let updatedServices
@@ -335,11 +351,11 @@ export default function AppointmentForm() {
         age: Number(data.age),
         email: data.email || "",
         address: data.address || "",
-        note: data.note || "", // NEW: Include note in the data payload
+        note: data.note || "", 
         services: selectedServices,
         serviceCharges,
         status: "pending",
-        createdAt: "", // Placeholder, will be set in addAppointment
+        createdAt: "", 
       })
 
       // --- WhatsApp Notification Logic ---
@@ -353,10 +369,9 @@ export default function AppointmentForm() {
         .join("\n")
       const totalCharge = getTotalServiceCharge()
 
-      const message = `*MEDORA Dental Clinic*\n\n*Appointment Confirmation*\n\nDear *${patientName}*,\n\nYour appointment has been *successfully booked* with us.\n\n*Details:*\n*Date:* ${appointmentDate}\n*Time:* ${appointmentTime}\n*Doctor:* ${doctor}\n*Services:*\n${selectedServiceList}\n\n*Total Estimated Charge:* ₹${totalCharge}\n\nThank you for choosing *MEDORA*. We look forward to seeing you!\n\n${data.note ? `*Note for Doctor:* ${data.note}\n\n` : ''}If you have any questions, reply to this message.`
+      const message = `*MEDORA Dental Clinic*\n\n*Appointment Confirmation*\n\nDear *${patientName}*,\n\nYour appointment has been *successfully booked* with us.\n\n*Details:*\n*Date:* ${appointmentDate}\n*Time:* ${appointmentTime}\n*Doctor:* ${doctor}\n*Services:*\n${selectedServiceList}\n\n*Total Estimated Charge:* ₹${totalCharge}\n\nThank MUDASSIR for choosing *MEDORA*. We look forward to seeing you!\n\n${data.note ? `*Note for Doctor:* ${data.note}\n\n` : ''}If you have any questions, reply to this message.`
 
       try {
-        // NOTE: Ensure this endpoint is secure and correct
         await fetch("https://wa.medblisss.com/send-text", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -370,6 +385,7 @@ export default function AppointmentForm() {
         console.error("Failed to send WhatsApp message:", waError)
       }
 
+
       toast.success("Appointment booked successfully!")
       // Reset form with current date and time
       const resetDate = new Date();
@@ -378,8 +394,8 @@ export default function AppointmentForm() {
         appointmentTime: getCurrentTime12hr(resetDate),
         services: [],
         contactNumber: "+91",
-        doctor: doctors.length === 1 ? doctors[0] : "", // Reset doctor to default if only one
-        note: "", // NEW: Reset note field
+        doctor: doctors.length === 1 ? doctors[0] : "", 
+        note: "", 
       })
       setSelectedServices([])
       setServiceCharges({})
@@ -397,7 +413,6 @@ export default function AppointmentForm() {
       setSelectedMinute(getMinutes(resetTimeRounded));
       setSelectedPeriod(resetPeriod);
       
-      // router.push("/appointment-table") // Commented out redirection for simple app view
     } catch (error) {
       console.error("Error booking appointment:", error)
       toast.error("Failed to book appointment. Please try again.")
@@ -409,17 +424,22 @@ export default function AppointmentForm() {
   const renderFieldError = (error: any) => {
     if (!error) return null
     return (
-      <div className="flex items-center gap-1 text-sm text-red-500 mt-1">
+      <div className="flex items-center gap-1 text-xs text-red-500 mt-1">
         <AlertCircle className="h-3 w-3" />
         <span>{error.message}</span>
       </div>
     )
   }
 
+  /**
+   * Enforce 10-digit limit directly in the input handler for better UX.
+   */
   const handleContactNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = e.target.value
-    // Enforce +91 prefix and limit to 10 digits
+    // Remove all non-digits, keep only the first 10 digits
     const cleanedValue = value.replace(/^\+91/, "").replace(/\D/g, "").slice(0, 10)
+    
+    // Always prefix with +91
     setValue("contactNumber", "+91" + cleanedValue, { shouldValidate: true })
   }
 
@@ -434,68 +454,62 @@ export default function AppointmentForm() {
     return time || "Select time"
   }
   
-  if (isLoadingData) {
-    return (
-        <Card className="max-w-2xl mx-auto shadow-xl border-0 bg-gradient-to-br from-white to-blue-50">
-            <CardHeader><CardTitle className="text-xl">Loading Clinic Data...</CardTitle></CardHeader>
-            <CardContent className="text-gray-600">Fetching doctors and services from database. Please wait...</CardContent>
-        </Card>
-    );
-  }
-
-
   return (
-    <Card className="max-w-2xl mx-auto shadow-xl border-0 bg-gradient-to-br from-white to-blue-50">
-      <CardHeader>
+    <Card className="max-w-xl mx-auto shadow-xl border-0 bg-gradient-to-br from-white to-blue-50">
+      <CardHeader className="p-4 pb-2">
         <div className="flex items-center gap-3">
-          <div className="p-3 bg-blue-100 rounded-xl">
-            <CalendarIcon className="h-6 w-6 text-blue-600" />
+          <div className="p-2 bg-blue-100 rounded-lg">
+            <CalendarIcon className="h-5 w-5 text-blue-600" />
           </div>
           <div>
-            <CardTitle className="text-2xl text-gray-900">Book New Appointment</CardTitle>
-            <CardDescription className="text-gray-600">
+            <CardTitle className="text-xl text-gray-900">Book New Appointment</CardTitle>
+            <CardDescription className="text-sm text-gray-600">
               Fill in the patient details to schedule an appointment
             </CardDescription>
           </div>
         </div>
       </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <CardContent className="p-4 pt-2">
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
+          
+          {/* Row 1: Patient Name, Age, Gender (3 columns on sm+) */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            
+            {/* Patient Name */}
             <div>
-              <Label htmlFor="patientName" className="flex items-center gap-2 text-gray-700 font-medium">
-                <User className="h-4 w-4" />
+              <Label htmlFor="patientName" className="flex items-center gap-1 text-sm text-gray-700 font-medium">
+                <User className="h-3 w-3" />
                 Patient Full Name *
               </Label>
               <Input
                 id="patientName"
                 {...register("patientName")}
-                placeholder="Enter patient full name"
-                className={`mt-1 ${errors.patientName ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"} focus:ring-blue-500`}
+                placeholder="Full name"
+                className={`h-9 mt-1 text-sm ${errors.patientName ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"} focus:ring-blue-500`}
               />
               {renderFieldError(errors.patientName)}
             </div>
 
+            {/* Age */}
             <div>
-              <Label htmlFor="age" className="text-gray-700 font-medium">
+              <Label htmlFor="age" className="text-sm text-gray-700 font-medium">
                 Age *
               </Label>
               <Input
                 id="age"
                 type="number"
                 {...register("age", { valueAsNumber: true })}
-                placeholder="Enter age (1-120)"
+                placeholder="Age"
                 min="1"
                 max="120"
-                className={`mt-1 ${errors.age ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"} focus:ring-blue-500`}
+                className={`h-9 mt-1 text-sm ${errors.age ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"} focus:ring-blue-500`}
               />
               {renderFieldError(errors.age)}
             </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            
+            {/* Gender */}
             <div>
-              <Label htmlFor="gender" className="text-gray-700 font-medium">
+              <Label htmlFor="gender" className="text-sm text-gray-700 font-medium">
                 Gender *
               </Label>
               <Select
@@ -506,7 +520,7 @@ export default function AppointmentForm() {
                 value={watch("gender")}
               >
                 <SelectTrigger
-                  className={`mt-1 ${errors.gender ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"}`}
+                  className={`h-9 mt-1 text-sm ${errors.gender ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"}`}
                 >
                   <SelectValue placeholder="Select gender" />
                 </SelectTrigger>
@@ -518,73 +532,85 @@ export default function AppointmentForm() {
               </Select>
               {renderFieldError(errors.gender)}
             </div>
+          </div>
 
+          {/* Row 2: Contact Number, Email (2 columns on md+) */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            
+            {/* Contact Number */}
             <div>
-              <Label htmlFor="contactNumber" className="flex items-center gap-2 text-gray-700 font-medium">
-                <Phone className="h-4 w-4" />
+              <Label htmlFor="contactNumber" className="flex items-center gap-1 text-sm text-gray-700 font-medium">
+                <Phone className="h-3 w-3" />
                 Contact Number *
               </Label>
               <Input
                 id="contactNumber"
                 {...register("contactNumber")}
                 placeholder="+91"
-                className={`mt-1 ${errors.contactNumber ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"} focus:ring-blue-500`}
-                onChange={handleContactNumberChange}
+                className={`h-9 mt-1 text-sm ${errors.contactNumber ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"} focus:ring-blue-500`}
+                onChange={handleContactNumberChange} 
                 value={watch("contactNumber")}
+                maxLength={13}
               />
               {renderFieldError(errors.contactNumber)}
             </div>
+            
+            {/* Email */}
+            <div>
+              <Label htmlFor="email" className="text-sm text-gray-700 font-medium">
+                Email (Optional)
+              </Label>
+              <Input
+                id="email"
+                type="email"
+                {...register("email")}
+                placeholder="Enter email address"
+                className={`h-9 mt-1 text-sm ${errors.email ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"} focus:ring-blue-500`}
+              />
+              {renderFieldError(errors.email)}
+            </div>
           </div>
 
-          <div>
-            <Label htmlFor="email" className="text-gray-700 font-medium">
-              Email (Optional)
-            </Label>
-            <Input
-              id="email"
-              type="email"
-              {...register("email")}
-              placeholder="Enter email address"
-              className={`mt-1 ${errors.email ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"} focus:ring-blue-500`}
-            />
-            {renderFieldError(errors.email)}
+          {/* Row 3: Address, Note (2 columns on md+) */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            
+            {/* Address */}
+            <div>
+              <Label htmlFor="address" className="flex items-center gap-1 text-sm text-gray-700 font-medium">
+                <MapPin className="h-3 w-3" />
+                Address (Optional)
+              </Label>
+              <Textarea
+                id="address"
+                {...register("address")}
+                placeholder="Enter complete address"
+                className={`mt-1 text-sm ${errors.address ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"} focus:ring-blue-500`}
+                rows={2}
+              />
+              {renderFieldError(errors.address)}
+            </div>
+            
+            {/* Note */}
+            <div>
+              <Label htmlFor="note" className="flex items-center gap-1 text-sm text-gray-700 font-medium">
+                <FileText className="h-3 w-3" />
+                Note for Doctor (Optional)
+              </Label>
+              <Textarea
+                id="note"
+                {...register("note")}
+                placeholder="e.g., Patient is very nervous."
+                className={`mt-1 text-sm ${errors.note ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"} focus:ring-blue-500`}
+                rows={2}
+              />
+              {renderFieldError(errors.note)}
+            </div>
           </div>
 
+          {/* Row 4: Doctor Selection (Full Width) */}
           <div>
-            <Label htmlFor="address" className="flex items-center gap-2 text-gray-700 font-medium">
-              <MapPin className="h-4 w-4" />
-              Address (Optional)
-            </Label>
-            <Textarea
-              id="address"
-              {...register("address")}
-              placeholder="Enter complete address"
-              className={`mt-1 ${errors.address ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"} focus:ring-blue-500`}
-              rows={3}
-            />
-            {renderFieldError(errors.address)}
-          </div>
-
-          {/* NEW NOTE FIELD */}
-          <div>
-            <Label htmlFor="note" className="flex items-center gap-2 text-gray-700 font-medium">
-              <FileText className="h-4 w-4" />
-              Note for Doctor / Patient Request (Optional)
-            </Label>
-            <Textarea
-              id="note"
-              {...register("note")}
-              placeholder="e.g., Patient is very nervous, or requested a specific procedure."
-              className={`mt-1 ${errors.note ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"} focus:ring-blue-500`}
-              rows={3}
-            />
-            {renderFieldError(errors.note)}
-          </div>
-          {/* END NEW NOTE FIELD */}
-
-          <div>
-            <Label htmlFor="doctor" className="flex items-center gap-2 text-gray-700 font-medium">
-              <Stethoscope className="h-4 w-4" />
+            <Label htmlFor="doctor" className="flex items-center gap-1 text-sm text-gray-700 font-medium">
+              <Stethoscope className="h-3 w-3" />
               Select Doctor *
             </Label>
             <Select
@@ -593,14 +619,20 @@ export default function AppointmentForm() {
                 trigger("doctor")
               }}
               value={watch("doctor")}
+              disabled={isLoadingData} 
             >
               <SelectTrigger
-                className={`mt-1 ${errors.doctor ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"}`}
+                className={`h-9 mt-1 text-sm ${errors.doctor ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"}`}
               >
-                <SelectValue placeholder="Select doctor" />
+                <SelectValue placeholder={isLoadingData ? "Loading doctors..." : "Select doctor"} />
               </SelectTrigger>
               <SelectContent>
-                {doctors.map((doctor) => (
+                {isLoadingData && (
+                    <div className="flex items-center p-2 text-sm text-gray-500">
+                        <Clock className="w-4 h-4 animate-spin mr-2"/> Loading...
+                    </div>
+                )}
+                {!isLoadingData && doctors.map((doctor) => (
                   <SelectItem key={doctor} value={doctor}>
                     {doctor}
                   </SelectItem>
@@ -610,44 +642,70 @@ export default function AppointmentForm() {
             {renderFieldError(errors.doctor)}
           </div>
 
-          <div>
-            <Label className="text-gray-700 font-medium">Select Services * (Multiple selection allowed)</Label>
+          {/* Row 5: Service Selection with Search (Full Width) */}
+          <div ref={serviceDropdownRef}> {/* Attach ref here */}
+            <Label className="text-sm text-gray-700 font-medium">Select Services * (Multiple selection allowed)</Label>
             <div className="relative mt-1">
               <button
                 type="button"
-                onClick={() => setIsServicesOpen(!isServicesOpen)}
-                className={`w-full flex items-center justify-between px-3 py-2 border rounded-md bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors.services ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"}`}
+                onClick={() => {
+                    if (!isLoadingData) setIsServicesOpen(!isServicesOpen)
+                }}
+                className={`h-9 w-full flex items-center justify-between px-3 py-2 border rounded-md bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-70 ${errors.services ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"}`}
+                disabled={isLoadingData} 
               >
-                <span className="text-gray-700">
-                  {selectedServices.length === 0
-                    ? "Select services..."
-                    : `${selectedServices.length} service(s) selected`}
+                <span className="text-sm text-gray-700">
+                  {isLoadingData 
+                    ? <span className="flex items-center"><Clock className="w-3 h-3 animate-spin mr-2"/> Loading services...</span>
+                    : selectedServices.length === 0
+                        ? "Select services..."
+                        : `${selectedServices.length} service(s) selected`}
                 </span>
                 <ChevronDown className="h-4 w-4 text-gray-400" />
               </button>
 
-              {isServicesOpen && (
-                <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-auto">
-                  {services.map((service) => (
-                    <label
-                      key={service.name}
-                      className="flex items-center justify-between px-3 py-2 hover:bg-gray-50 cursor-pointer"
-                    >
-                      <div className="flex items-center space-x-2">
-                        <input
-                          type="checkbox"
-                          checked={selectedServices.includes(service.name)}
-                          onChange={(e) => handleServiceChange(service.name, service.charge, e.target.checked)}
-                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        />
-                        <span className="text-sm text-gray-700">{service.name}</span>
-                      </div>
-                      <span className="text-sm font-medium text-green-600">₹{service.charge}</span>
-                    </label>
-                  ))}
-                  {services.length === 0 && (
-                      <div className="p-3 text-sm text-center text-gray-500">No services found. Add some services first.</div>
-                  )}
+              {isServicesOpen && !isLoadingData && (
+                <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-xl max-h-60 overflow-hidden flex flex-col">
+                    {/* Search Input */}
+                    <div className="p-2 border-b">
+                        <div className="relative">
+                            <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                            <Input
+                                placeholder="Search services..."
+                                value={serviceSearchTerm}
+                                onChange={(e) => setServiceSearchTerm(e.target.value)}
+                                className="pl-8 h-9 text-sm"
+                                autoFocus
+                            />
+                        </div>
+                    </div>
+
+                    {/* Service List */}
+                    <div className="overflow-y-auto flex-grow">
+                        {filteredServices.length > 0 ? (
+                            filteredServices.map((service) => (
+                                <label
+                                key={service.name}
+                                className="flex items-center justify-between px-3 py-2 text-sm hover:bg-blue-50 cursor-pointer"
+                                >
+                                <div className="flex items-center space-x-2">
+                                    <input
+                                    type="checkbox"
+                                    checked={selectedServices.includes(service.name)}
+                                    onChange={(e) => handleServiceChange(service.name, service.charge, e.target.checked)}
+                                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                    />
+                                    <span className="text-gray-700">{service.name}</span>
+                                </div>
+                                <span className="font-medium text-green-600">₹{service.charge}</span>
+                                </label>
+                            ))
+                        ) : (
+                            <div className="p-3 text-sm text-center text-gray-500">
+                                {serviceSearchTerm ? "No matching services found." : "No services available."}
+                            </div>
+                        )}
+                    </div>
                 </div>
               )}
             </div>
@@ -658,14 +716,14 @@ export default function AppointmentForm() {
                   {selectedServices.map((service) => (
                     <span
                       key={service}
-                      className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
+                      className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
                     >
                       {service} - ₹{serviceCharges[service]}
                     </span>
                   ))}
                 </div>
-                <div className="text-sm font-medium text-gray-700">
-                  Total Service Charge: <span className="text-green-600">₹{getTotalServiceCharge()}</span>
+                <div className="text-sm font-semibold text-gray-700">
+                  Total Charge: <span className="text-green-600">₹{getTotalServiceCharge()}</span>
                 </div>
               </div>
             )}
@@ -673,49 +731,50 @@ export default function AppointmentForm() {
             {renderFieldError(errors.services)}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Row 6: Appointment Date & Time (2 columns on md+) */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
-              <Label htmlFor="appointmentDate" className="flex items-center gap-2 text-gray-700 font-medium">
-                <CalendarIcon className="h-4 w-4" />
+              <Label htmlFor="appointmentDate" className="flex items-center gap-1 text-sm text-gray-700 font-medium">
+                <CalendarIcon className="h-3 w-3" />
                 Appointment Date *
               </Label>
               <Input
                 id="appointmentDate"
                 type="date"
                 {...register("appointmentDate")}
-                className={`mt-1 ${errors.appointmentDate ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"} focus:ring-blue-500`}
+                className={`h-9 mt-1 text-sm ${errors.appointmentDate ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"} focus:ring-blue-500`}
               />
               {renderFieldError(errors.appointmentDate)}
             </div>
 
             <div>
-              <Label htmlFor="appointmentTime" className="flex items-center gap-2 text-gray-700 font-medium">
-                <Clock className="h-4 w-4" />
+              <Label htmlFor="appointmentTime" className="flex items-center gap-1 text-sm text-gray-700 font-medium">
+                <Clock className="h-3 w-3" />
                 Appointment Time *
               </Label>
               <Popover open={isTimePickerOpen} onOpenChange={setIsTimePickerOpen}>
                 <PopoverTrigger asChild>
                   <Button
                     variant="outline"
-                    className={`w-full justify-start text-left font-normal mt-1 ${errors.appointmentTime ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"}`}
+                    className={`h-9 w-full justify-start text-left font-normal mt-1 text-sm ${errors.appointmentTime ? "border-red-500 focus:border-red-500" : "border-gray-300 focus:border-blue-500"}`}
                   >
                     <Clock className="mr-2 h-4 w-4" />
                     {formatDisplayTime(watch("appointmentTime"))}
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-80 p-0" align="start">
-                  <div className="p-4 space-y-4">
-                    <div className="text-sm font-medium text-gray-700 mb-3">Select Time</div>
+                  <div className="p-3 space-y-3">
+                    <div className="text-sm font-medium text-gray-700 mb-2">Select Time</div>
 
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-3 gap-3">
                       {/* Hour Selection */}
                       <div>
-                        <Label className="text-xs text-gray-500 mb-2 block">Hour</Label>
+                        <Label className="text-xs text-gray-500 mb-1 block">Hour</Label>
                         <Select
                           value={selectedHour.toString()}
                           onValueChange={(value) => setSelectedHour(Number.parseInt(value))}
                         >
-                          <SelectTrigger className="h-9">
+                          <SelectTrigger className="h-8 text-sm">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -730,12 +789,12 @@ export default function AppointmentForm() {
 
                       {/* Minute Selection */}
                       <div>
-                        <Label className="text-xs text-gray-500 mb-2 block">Minute</Label>
+                        <Label className="text-xs text-gray-500 mb-1 block">Minute</Label>
                         <Select
                           value={selectedMinute.toString()}
                           onValueChange={(value) => setSelectedMinute(Number.parseInt(value))}
                         >
-                          <SelectTrigger className="h-9">
+                          <SelectTrigger className="h-8 text-sm">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -750,9 +809,9 @@ export default function AppointmentForm() {
 
                       {/* AM/PM Selection */}
                       <div>
-                        <Label className="text-xs text-gray-500 mb-2 block">Period</Label>
+                        <Label className="text-xs text-gray-500 mb-1 block">Period</Label>
                         <Select value={selectedPeriod} onValueChange={(value: "AM" | "PM") => setSelectedPeriod(value)}>
-                          <SelectTrigger className="h-9">
+                          <SelectTrigger className="h-8 text-sm">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -767,12 +826,12 @@ export default function AppointmentForm() {
                       <Button
                         variant="outline"
                         size="sm"
-                        className="flex-1 bg-transparent"
+                        className="flex-1 bg-transparent h-8 text-sm"
                         onClick={() => setIsTimePickerOpen(false)}
                       >
                         Cancel
                       </Button>
-                      <Button size="sm" className="flex-1 bg-blue-600 hover:bg-blue-700" onClick={handleTimeSelect}>
+                      <Button size="sm" className="flex-1 bg-blue-600 hover:bg-blue-700 h-8 text-sm" onClick={handleTimeSelect}>
                         Select Time
                       </Button>
                     </div>
@@ -785,14 +844,14 @@ export default function AppointmentForm() {
 
           <Button
             type="submit"
-            className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-medium py-3 rounded-lg shadow-lg hover:shadow-xl transition-all duration-200"
+            className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-medium py-2.5 rounded-lg shadow-lg hover:shadow-xl transition-all duration-200 mt-4"
             disabled={isSubmitting || isLoadingData || doctors.length === 0 || services.length === 0}
           >
             {isSubmitting ? "Booking Appointment..." : "Book Appointment"}
           </Button>
-          {(doctors.length === 0 || services.length === 0) && (
-              <div className="text-center text-sm text-yellow-600 flex items-center justify-center gap-1 mt-2">
-                <AlertCircle className="h-4 w-4"/> Services or Doctors data missing. Cannot book.
+          {(doctors.length === 0 || services.length === 0) && !isLoadingData && (
+              <div className="text-center text-xs text-yellow-600 flex items-center justify-center gap-1 mt-2">
+                <AlertCircle className="h-3 w-3"/> Services or Doctors data missing. Cannot book.
               </div>
           )}
         </form>
