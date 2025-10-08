@@ -2,6 +2,7 @@ import { ref, push, set, get, onValue, update, remove, off } from "firebase/data
 import { database } from "./firebase"
 
 export interface Appointment {
+  note: string | undefined
   id?: string
   patientName: string
   age: number

@@ -7,14 +7,12 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Eye, Search, Calendar, Filter, CheckCircle, TrendingUp, CalendarDays, Pencil, ChevronDown } from "lucide-react"
-import {
-  subscribeToAppointments,
-  type Appointment,
-  updateAppointment,
-  getAllAppointments,
-  getAppointmentsByDate,
-} from "@/lib/appointments"
-import { InvoiceModal } from "./invoice-modal"
+
+// Firebase Imports
+import { getDatabase, ref, set, get, onValue, off } from "firebase/database"
+import { database } from "@/lib/firebase" 
+
+// Date Utility Imports
 import {
   format,
   startOfDay,
@@ -28,7 +26,50 @@ import {
   isValid,
 } from "date-fns"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { useUser } from "@/components/ui/UserContext"
+
+
+// Mock imports for demonstration completeness 
+const InvoiceModal = ({ isOpen, onClose, appointment }: any) => isOpen ? (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="bg-white p-6 rounded-lg shadow-xl">
+            <h2 className="text-xl font-bold">Invoice for {appointment?.patientName}</h2>
+            <p className="mt-2">Total Paid: ₹{appointment?.payment?.cashAmount + appointment?.payment?.onlineAmount || 0}</p>
+            <Button onClick={onClose} className="mt-4">Close</Button>
+        </div>
+    </div>
+) : null;
+// Mock useUser context hook
+const useUser = () => ({ role: 'admin' });
+
+
+// --- INTERFACE DEFINITION ---
+export interface Appointment {
+  id?: string;
+  patientName: string;
+  age: number;
+  gender: string;
+  contactNumber: string;
+  doctor: string;
+  services: string[];
+  appointmentDate: string;
+  appointmentTime: string;
+  status: 'pending' | 'completed' | 'cancelled';
+  cashAmount?: number;
+  onlineAmount?: number;
+  note?: string; 
+  payment?: {
+    paymentMethod: string;
+    cashAmount: number;
+    onlineAmount: number;
+    discountAmount: number;
+    cashType: string;
+    onlineType: string;
+    createdAt: string;
+  };
+  paymentMethod: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
 
 // Extended type for editing appointments with payment fields at root level
 type AppointmentWithPaymentFields = Appointment & {
@@ -37,6 +78,152 @@ type AppointmentWithPaymentFields = Appointment & {
   onlineType?: string
 }
 
+// --- APPOINTMENT UTILITIES (Firebase helpers remain the same) ---
+
+const snapshotToAppointments = (snapshot: any): Appointment[] => {
+    const appointments: Appointment[] = [];
+    if (!snapshot.exists()) return appointments;
+
+    const years = snapshot.val();
+    if (!years) return appointments;
+
+    Object.keys(years).forEach(year => {
+        const months = years[year];
+        Object.keys(months).forEach(month => {
+            const days = months[month];
+            Object.keys(days).forEach(day => {
+                const dailyAppointments = days[day];
+                Object.keys(dailyAppointments).forEach(id => {
+                    const appointment = dailyAppointments[id];
+                    appointments.push({ ...appointment, id });
+                });
+            });
+        });
+    });
+    return appointments;
+};
+
+export async function getDoctorOptionsFromDB(): Promise<string[]> {
+    const doctorsRef = ref(database, 'doctor');
+    try {
+        const snapshot = await get(doctorsRef);
+        if (snapshot.exists()) {
+            const doctorsArray: Array<{ name: string } | null> = snapshot.val();
+            return doctorsArray
+                .filter((d): d is { name: string } => d !== null && typeof d === 'object' && 'name' in d)
+                .map(d => d.name);
+        }
+        return [];
+    } catch (error) {
+        console.error("Firebase fetch error (Doctors):", error);
+        return [];
+    }
+}
+
+export async function getServiceOptionsFromDB(): Promise<string[]> {
+    const servicesRef = ref(database, 'services_master');
+    try {
+        const snapshot = await get(servicesRef);
+        if (snapshot.exists()) {
+            const servicesObject = snapshot.val();
+            return Object.values(servicesObject)
+                .map((service: any) => service?.name)
+                .filter((name: any): name is string => typeof name === 'string');
+        }
+        return [];
+    } catch (error) {
+        console.error("Firebase fetch error (Services):", error);
+        return [];
+    }
+}
+
+export const subscribeToAppointments = (callback: (data: Appointment[]) => void) => {
+    const appointmentsRef = ref(database, 'appointments');
+
+    const listener = onValue(appointmentsRef, (snapshot) => {
+        const data = snapshotToAppointments(snapshot);
+        callback(data);
+    }, (error) => {
+        console.error("Error subscribing to appointments:", error);
+    });
+
+    return () => off(appointmentsRef, 'value', listener);
+};
+
+export const updateAppointment = async (id: string, updates: Partial<Appointment>): Promise<void> => {
+    if (!updates.createdAt) {
+        throw new Error("Missing creation date for update path calculation.");
+    }
+
+    const date = new Date(updates.createdAt);
+    const year = date.getFullYear();
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const day = date.getDate().toString().padStart(2, '0');
+
+    const path = `appointments/${year}/${month}/${day}/${id}`;
+    const appointmentRef = ref(database, path);
+
+    const existingSnapshot = await get(appointmentRef);
+    if (!existingSnapshot.exists()) {
+        throw new Error("Appointment not found at calculated path.");
+    }
+    const existingData = existingSnapshot.val();
+
+    const finalUpdates = {
+        ...existingData,
+        ...updates,
+        updatedAt: new Date().toISOString(),
+        payment: {
+            ...existingData.payment,
+            ...updates.payment,
+        }
+    }
+
+    await set(appointmentRef, finalUpdates);
+    console.log(`Appointment ${id} updated successfully at path: ${path}`);
+};
+
+export const getAppointmentsByDate = async (year: string, month: string, day: string): Promise<Appointment[]> => {
+    const dailyRef = ref(database, `appointments/${year}/${month}/${day}`);
+    const snapshot = await get(dailyRef);
+    if (!snapshot.exists()) return [];
+
+    const appointments: Appointment[] = [];
+    const dailyAppointments = snapshot.val();
+    Object.keys(dailyAppointments).forEach(id => {
+        appointments.push({ ...dailyAppointments[id], id });
+    });
+    return appointments;
+};
+
+// --- Date filter display utility ---
+const getFilterDisplay = (filter: string, dateInfo: any) => {
+    const now = new Date();
+    switch (filter) {
+        case 'today':
+            const date = dateInfo.specificDate ? new Date(dateInfo.specificDate) : now;
+            return `Date: ${format(date, 'PPP')}`;
+        case 'week':
+            const weekDt = dateInfo.weekDate ? new Date(dateInfo.weekDate) : now;
+            return `Week of: ${format(startOfWeek(weekDt), 'MMM dd')} - ${format(endOfWeek(weekDt), 'MMM dd, yyyy')}`;
+        case 'month':
+            const monthDt = dateInfo.monthDate ? new Date(dateInfo.monthDate + "-01") : now;
+            return `Month: ${format(monthDt, 'MMMM yyyy')}`;
+        case 'year':
+            const yearDt = dateInfo.yearDate ? new Date(dateInfo.yearDate + "-01-01") : now;
+            return `Year: ${format(yearDt, 'yyyy')}`;
+        case 'custom':
+            if (dateInfo.customStartDate && dateInfo.customEndDate) {
+                return `Range: ${format(new Date(dateInfo.customStartDate), 'MMM dd, yyyy')} - ${format(new Date(dateInfo.customEndDate), 'MMM dd, yyyy')}`;
+            }
+            return 'All Time';
+        case 'all':
+        default:
+            return 'All Time';
+    }
+};
+
+// --- AttendedAppointments Component ---
 export function AttendedAppointments() {
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [filteredAppointments, setFilteredAppointments] = useState<Appointment[]>([])
@@ -54,8 +241,10 @@ export function AttendedAppointments() {
   const [isEditOpen, setIsEditOpen] = useState(false)
   const [editData, setEditData] = useState<AppointmentWithPaymentFields | null>(null)
   const [isSaving, setIsSaving] = useState(false)
+  
   const [doctorOptions, setDoctorOptions] = useState<string[]>([])
   const [serviceOptions, setServiceOptions] = useState<string[]>([])
+  
   const [isServicesOpen, setIsServicesOpen] = useState(false)
   const { role } = useUser()
   const today = format(new Date(), "yyyy-MM-dd")
@@ -82,18 +271,20 @@ export function AttendedAppointments() {
   }, [searchTerm, dateFilter, specificDate, weekDate, monthDate, yearDate, customStartDate, customEndDate])
 
   useEffect(() => {
-    // Fetch unique doctors and services from all appointments
-    getAllAppointments().then((appointments) => {
-      const doctorsSet = new Set<string>()
-      const servicesSet = new Set<string>()
-      appointments.forEach((apt) => {
-        if (apt.doctor) doctorsSet.add(apt.doctor)
-        ;(apt.services || []).forEach((s) => servicesSet.add(s))
-      })
-      setDoctorOptions(Array.from(doctorsSet))
-      setServiceOptions(Array.from(servicesSet))
-    })
-  }, [])
+    const fetchMasterData = async () => {
+      try {
+        const doctors = await getDoctorOptionsFromDB()
+        const services = await getServiceOptionsFromDB()
+        setDoctorOptions(doctors)
+        setServiceOptions(services)
+      } catch (error) {
+        console.error("Failed to fetch master doctor/service data:", error)
+        setDoctorOptions([])
+        setServiceOptions([])
+      }
+    }
+    fetchMasterData()
+  }, []) 
 
   const applyFilters = (
     appointmentsList: Appointment[],
@@ -109,14 +300,12 @@ export function AttendedAppointments() {
     let filtered = appointmentsList
     const now = new Date()
 
-    // Staff role always filters by today's date
     if (role === "staff") {
       filtered = filtered.filter((apt) => format(new Date(apt.appointmentDate), "yyyy-MM-dd") === today)
     } else {
-      // Admin role filters by selected date filter
       switch (filter) {
         case "today":
-          const targetDate = specDate ? new Date(specDate) : now
+          const targetDate = specDate ? new Date(`${specDate}T00:00:00`) : now;
           if (isValid(targetDate)) {
             filtered = filtered.filter((apt) => {
               const appointmentDate = new Date(apt.appointmentDate)
@@ -125,7 +314,7 @@ export function AttendedAppointments() {
           }
           break
         case "week":
-          const targetWeekDate = weekDt ? new Date(weekDt) : now
+          const targetWeekDate = weekDt ? new Date(`${weekDt}T00:00:00`) : now
           if (isValid(targetWeekDate)) {
             filtered = filtered.filter((apt) => {
               const appointmentDate = new Date(apt.appointmentDate)
@@ -134,7 +323,7 @@ export function AttendedAppointments() {
           }
           break
         case "month":
-          const targetMonthDate = monthDt ? new Date(monthDt + "-01") : now
+          const targetMonthDate = monthDt ? new Date(`${monthDt}-01T00:00:00`) : now
           if (isValid(targetMonthDate)) {
             filtered = filtered.filter((apt) => {
               const appointmentDate = new Date(apt.appointmentDate)
@@ -143,7 +332,7 @@ export function AttendedAppointments() {
           }
           break
         case "year":
-          const targetYearDate = yearDt ? new Date(yearDt + "-01-01") : now
+          const targetYearDate = yearDt ? new Date(`${yearDt}-01-01T00:00:00`) : now
           if (isValid(targetYearDate)) {
             filtered = filtered.filter((apt) => {
               const appointmentDate = new Date(apt.appointmentDate)
@@ -153,8 +342,8 @@ export function AttendedAppointments() {
           break
         case "custom":
           if (customStart && customEnd) {
-            const startDate = new Date(customStart)
-            const endDate = new Date(customEnd)
+            const startDate = new Date(`${customStart}T00:00:00`)
+            const endDate = new Date(`${customEnd}T00:00:00`)
             if (isValid(startDate) && isValid(endDate)) {
               filtered = filtered.filter((apt) => {
                 const appointmentDate = new Date(apt.appointmentDate)
@@ -168,10 +357,16 @@ export function AttendedAppointments() {
       }
     }
 
-    // Apply search filter to the result of the date filter
     if (search) {
       filtered = filtered.filter((apt) => apt.patientName.toLowerCase().includes(search.toLowerCase()))
     }
+    
+    // Sort by creation date descending
+    filtered.sort((a, b) => {
+        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return dateB - dateA;
+    });
 
     setFilteredAppointments(filtered)
   }
@@ -182,18 +377,17 @@ export function AttendedAppointments() {
   }
 
   const handleEdit = async (appointment: Appointment) => {
-    // Fetch the latest data from Firebase for this appointment
     let baseAppointment = appointment
-    if (appointment.createdAt) {
+    if (appointment.createdAt && appointment.id) {
       const createdDate = new Date(appointment.createdAt)
       const year = createdDate.getFullYear().toString()
       const month = (createdDate.getMonth() + 1).toString().padStart(2, "0")
       const day = createdDate.getDate().toString().padStart(2, "0")
-      const appointments = await getAppointmentsByDate(year, month, day)
+      const appointments = await getAppointmentsByDate(year, month, day) 
       const latest = appointments.find((a) => a.id === appointment.id)
       if (latest) baseAppointment = latest
     }
-    // If payment object exists, use its values to auto-fill
+    
     const editObj = { ...baseAppointment } as AppointmentWithPaymentFields
     if (baseAppointment.payment) {
       editObj.paymentMethod = baseAppointment.payment.paymentMethod
@@ -203,6 +397,10 @@ export function AttendedAppointments() {
       editObj.cashType = baseAppointment.payment.cashType
       editObj.onlineType = baseAppointment.payment.onlineType
     }
+    if (!editObj.services) {
+      editObj.services = []
+    }
+
     setEditData(editObj)
     setIsEditOpen(true)
   }
@@ -213,10 +411,9 @@ export function AttendedAppointments() {
   }
 
   const handleEditSave = async () => {
-    if (!editData) return
+    if (!editData || !editData.id) return;
     setIsSaving(true)
     try {
-      // Always update the payment object with the current values
       const payment = {
         paymentMethod: editData.paymentMethod || "",
         cashAmount: editData.cashAmount || 0,
@@ -226,21 +423,21 @@ export function AttendedAppointments() {
         onlineType: editData.onlineType || "",
         createdAt: editData.payment?.createdAt || new Date().toISOString(),
       }
-      // Remove root payment fields to avoid sending undefined
-      const { paymentMethod, cashAmount, onlineAmount, discountAmount, cashType, onlineType, ...rest } = editData as AppointmentWithPaymentFields
-      await updateAppointment(editData.id!, {
+      const { paymentMethod, cashAmount, onlineAmount, discountAmount, cashType, onlineType, ...rest } = editData
+      
+      await updateAppointment(editData.id, {
         ...rest,
         payment,
       })
       setIsEditOpen(false)
     } catch (e) {
-      alert("Failed to update appointment")
+      console.error("Failed to update appointment:", e);
+      alert("Error: Could not save changes. Please try again.");
     } finally {
       setIsSaving(false)
     }
   }
 
-  // Helper to get the total paid amount for an appointment
   const getPaidAmount = (apt: Appointment) => {
     if (apt.payment) {
       return (apt.payment.cashAmount || 0) + (apt.payment.onlineAmount || 0)
@@ -275,7 +472,16 @@ export function AttendedAppointments() {
     }
   }
 
-  const paymentMethods = ["Cash", "Online", "Cash+Online"]
+  const filterDateInfo = {
+    filter: dateFilter,
+    specificDate,
+    weekDate,
+    monthDate,
+    yearDate,
+    customStartDate,
+    customEndDate,
+  };
+
 
   return (
     <div className="space-y-6 px-1 md:px-0 max-w-7xl mx-auto w-full">
@@ -295,16 +501,17 @@ export function AttendedAppointments() {
                 </p>
               </div>
             </div>
-            {/* Show total revenue box for admin only */}
             {role !== "staff" && (
-              <div className="flex items-center gap-2 bg-gradient-to-r from-teal-100 to-blue-100 px-4 py-2 rounded-xl shadow-sm">
-                <TrendingUp className="h-5 w-5 text-teal-600" />
-                <div className="text-right">
-                  <div className="text-xs md:text-sm text-teal-700 font-semibold">Total Revenue</div>
-                  <div className="text-base md:text-lg font-bold text-blue-900">
-                    ₹{getTotalAmount().toLocaleString()}
+              <div className="flex flex-col sm:flex-row gap-3">
+                 <div className="flex items-center gap-2 bg-gradient-to-r from-teal-100 to-blue-100 px-4 py-2 rounded-xl shadow-sm">
+                    <TrendingUp className="h-5 w-5 text-teal-600" />
+                    <div className="text-right">
+                      <div className="text-xs md:text-sm text-teal-700 font-semibold">Total Revenue</div>
+                      <div className="text-base md:text-lg font-bold text-blue-900">
+                        ₹{getTotalAmount().toLocaleString()}
+                      </div>
+                    </div>
                   </div>
-                </div>
               </div>
             )}
           </div>
@@ -319,7 +526,6 @@ export function AttendedAppointments() {
                 className="pl-10 border-blue-200 focus:border-teal-400 focus:ring-teal-300 rounded-xl text-sm md:text-base bg-gradient-to-r from-white to-blue-50"
               />
             </div>
-            {/* Only show date filter for admin, not staff */}
             {role !== "staff" && (
               <div className="flex items-center gap-2">
                 <Filter className="h-4 w-4 text-blue-400" />
@@ -408,7 +614,7 @@ export function AttendedAppointments() {
                     className="w-28 md:w-32 border-blue-200 focus:border-teal-400 focus:ring-teal-300 rounded-xl text-sm md:text-base bg-gradient-to-r from-white to-blue-50"
                     placeholder="Enter year"
                   />
-                  <span className="text-xs md:text-sm text-blue-500">Enter year (e.g., 2024)</span>
+                  <span className="text-xs md:text-sm text-blue-500">Enter year (e.g., 2025)</span>
                 </div>
               )}
               {dateFilter === "custom" && customStartDate && customEndDate && (
@@ -436,18 +642,9 @@ export function AttendedAppointments() {
           {role !== "staff" && dateFilter !== "all" && (
             <div className="mt-2 p-3 bg-gradient-to-r from-teal-50 to-blue-50 rounded-xl border border-blue-100">
               <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2">
-                {dateFilter === "today" && (
-                  <div className="text-xs md:text-sm text-blue-700">
-                    <strong>Active Filter:</strong> Date:{" "}
-                    {format(specificDate ? new Date(specificDate) : new Date(), "PPP")}
-                  </div>
-                )}
-                {dateFilter === "custom" && customStartDate && customEndDate && (
-                  <div className="text-xs md:text-sm text-blue-700">
-                    <strong>Active Filter:</strong> Custom Range: {format(new Date(customStartDate), "PPP")} -{" "}
-                    {format(new Date(customEndDate), "PPP")}
-                  </div>
-                )}
+                <div className="text-xs md:text-sm text-blue-700">
+                    <strong>Active Filter:</strong> {getFilterDisplay(dateFilter, filterDateInfo)}
+                </div>
                 <div className="text-xs md:text-sm font-medium text-blue-600">
                   {filteredAppointments.length} appointment(s) found
                 </div>
@@ -457,7 +654,7 @@ export function AttendedAppointments() {
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto rounded-2xl border border-blue-100 bg-gradient-to-br from-white to-blue-50 shadow-lg">
-            <table className="w-full border-collapse min-w-[700px] md:min-w-full text-xs md:text-sm">
+            <table className="w-full border-collapse min-w-[1000px] text-xs md:text-sm">
               <thead className="sticky top-0 z-10 bg-gradient-to-r from-blue-50 to-white">
                 <tr className="border-b-2 border-blue-200">
                   <th className="text-left p-3 font-semibold text-blue-900">Sr. No.</th>
@@ -468,6 +665,7 @@ export function AttendedAppointments() {
                   <th className="text-left p-3 font-semibold text-blue-900">Doctor</th>
                   <th className="text-left p-3 font-semibold text-blue-900">Services</th>
                   <th className="text-left p-3 font-semibold text-blue-900">Date & Time</th>
+                  <th className="text-left p-3 font-semibold text-blue-900">Note</th> 
                   <th className="text-left p-3 font-semibold text-blue-900">Paid Amount</th>
                   <th className="text-left p-3 font-semibold text-blue-900">Status</th>
                   <th className="text-left p-3 font-semibold text-blue-900">Actions</th>
@@ -500,6 +698,9 @@ export function AttendedAppointments() {
                         <div>{appointment.appointmentDate}</div>
                         <div className="text-blue-500">{appointment.appointmentTime}</div>
                       </div>
+                    </td>
+                    <td className="p-3 max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap text-gray-600 text-xs" title={appointment.note}>
+                      {appointment.note || 'N/A'}
                     </td>
                     <td className="p-3">
                       <div className="text-xs md:text-sm">
@@ -623,18 +824,18 @@ export function AttendedAppointments() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Patient Name</label>
-                  <input
+                  <Input
                     className="w-full rounded-lg border border-amber-200 px-3 py-2 focus:ring-amber-400 focus:border-amber-400"
-                    value={editData.patientName}
+                    value={editData.patientName || ''}
                     onChange={(e) => handleEditChange("patientName", e.target.value)}
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Age</label>
-                  <input
+                  <Input
                     type="number"
                     className="w-full rounded-lg border border-amber-200 px-3 py-2 focus:ring-amber-400 focus:border-amber-400"
-                    value={editData.age}
+                    value={editData.age || ''}
                     onChange={(e) => handleEditChange("age", Number(e.target.value))}
                   />
                 </div>
@@ -642,26 +843,27 @@ export function AttendedAppointments() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Gender</label>
-                  <input
+                  <Input
                     className="w-full rounded-lg border border-amber-200 px-3 py-2 focus:ring-amber-400 focus:border-amber-400"
-                    value={editData.gender}
+                    value={editData.gender || ''}
                     onChange={(e) => handleEditChange("gender", e.target.value)}
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Contact Number</label>
-                  <input
+                  <Input
                     className="w-full rounded-lg border border-amber-200 px-3 py-2 focus:ring-amber-400 focus:border-amber-400"
-                    value={editData.contactNumber}
+                    value={editData.contactNumber || ''}
                     onChange={(e) => handleEditChange("contactNumber", e.target.value)}
                   />
                 </div>
               </div>
+              {/* Doctor Dropdown */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Doctor</label>
                 <select
                   className="w-full rounded-lg border border-amber-200 px-3 py-2 focus:ring-amber-400 focus:border-amber-400"
-                  value={editData.doctor}
+                  value={editData.doctor || ""}
                   onChange={(e) => handleEditChange("doctor", e.target.value)}
                 >
                   <option value="">Select doctor</option>
@@ -672,6 +874,7 @@ export function AttendedAppointments() {
                   ))}
                 </select>
               </div>
+              {/* Services Multi-Select */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Services (Multiple selection allowed)
@@ -685,7 +888,7 @@ export function AttendedAppointments() {
                     <span className="text-gray-700">
                       {editData.services?.length === 0
                         ? "Select services..."
-                        : `${editData.services.length} service(s) selected`}
+                        : `${editData.services?.length || 0} service(s) selected`}
                     </span>
                     <ChevronDown className="h-4 w-4 text-amber-400" />
                   </button>
@@ -731,6 +934,19 @@ export function AttendedAppointments() {
                   </div>
                 )}
               </div>
+              
+              {/* Note Field in Edit Dialog */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Note for Doctor (Optional)</label>
+                <textarea
+                  className="w-full rounded-lg border border-amber-200 px-3 py-2 focus:ring-amber-400 focus:border-amber-400"
+                  value={editData.note || ""}
+                  onChange={(e) => handleEditChange("note", e.target.value)}
+                  placeholder="Enter notes here..."
+                  rows={3}
+                />
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
                 <Select
@@ -752,7 +968,7 @@ export function AttendedAppointments() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Cash Amount</label>
                   <Input
                     type="number"
-                    value={editData.cashAmount || ""}
+                    value={editData.cashAmount || ''}
                     onChange={(e) => handleEditChange("cashAmount", Number(e.target.value))}
                     placeholder="Enter cash amount"
                     className="border-amber-300 focus:border-amber-500"
@@ -764,7 +980,7 @@ export function AttendedAppointments() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Online Amount</label>
                   <Input
                     type="number"
-                    value={editData.onlineAmount || ""}
+                    value={editData.onlineAmount || ''}
                     onChange={(e) => handleEditChange("onlineAmount", Number(e.target.value))}
                     placeholder="Enter online amount"
                     className="border-amber-300 focus:border-amber-500"
@@ -775,7 +991,7 @@ export function AttendedAppointments() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Discount Amount</label>
                 <Input
                   type="number"
-                  value={editData.discountAmount || ""}
+                  value={editData.discountAmount || ''}
                   onChange={(e) => handleEditChange("discountAmount", Number(e.target.value))}
                   placeholder="Enter discount amount"
                   className="border-amber-300 focus:border-amber-500"

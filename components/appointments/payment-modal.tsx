@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -19,12 +19,14 @@ interface PaymentModalProps {
 }
 
 export function PaymentModal({ isOpen, onClose, onPaymentComplete, appointment }: PaymentModalProps) {
-  const [paymentMethod, setPaymentMethod] = useState("")
-  const [totalAmount, setTotalAmount] = useState("")
+  // 1. Set default paymentMethod to "cash"
+  const [paymentMethod, setPaymentMethod] = useState("cash") 
+  const [totalAmount, setTotalAmount] = useState("") // Unused state, kept for original structure
   const [cashAmount, setCashAmount] = useState("")
   const [onlineAmount, setOnlineAmount] = useState("")
   const [discountAmount, setDiscountAmount] = useState("")
-  const [cashType, setCashType] = useState("")
+  // 2. Set default cashType to "Cash"
+  const [cashType, setCashType] = useState("Cash") 
   const [onlineType, setOnlineType] = useState("UPI")
 
   const getServiceCharge = () => {
@@ -35,6 +37,19 @@ export function PaymentModal({ isOpen, onClose, onPaymentComplete, appointment }
   }
 
   const serviceCharge = getServiceCharge()
+  
+  // New useEffect to set the cashAmount to serviceCharge when the modal opens/appointment changes
+  useEffect(() => {
+    if (isOpen && appointment) {
+      const charge = getServiceCharge()
+      // 3. Update cashAmount with the service charge when the modal opens
+      setCashAmount(charge.toString()) 
+      setPaymentMethod("cash") // Ensure it resets to cash if the user closed and reopened
+      setCashType("Cash") // Ensure it resets to Cash type
+    }
+  }, [isOpen, appointment])
+
+
   const handleSubmit = () => {
     if (!paymentMethod) return
     if (paymentMethod === "cash" && !cashAmount) return
@@ -63,24 +78,24 @@ export function PaymentModal({ isOpen, onClose, onPaymentComplete, appointment }
     }
 
     onPaymentComplete(paymentData)
-    // Reset form
-    setPaymentMethod("")
+    // Reset form after submission
+    setPaymentMethod("cash")
     setTotalAmount("")
     setCashAmount("")
     setOnlineAmount("")
     setDiscountAmount("")
-    setCashType("")
+    setCashType("Cash")
     setOnlineType("UPI")
   }
 
   const handleClose = () => {
-    // Reset form when closing
-    setPaymentMethod("")
+    // Reset form when closing, set defaults back
+    setPaymentMethod("cash")
     setTotalAmount("")
     setCashAmount("")
     setOnlineAmount("")
     setDiscountAmount("")
-    setCashType("")
+    setCashType("Cash")
     setOnlineType("UPI")
     onClose()
   }

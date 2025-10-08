@@ -197,7 +197,6 @@ export function StatsCards() {
               <Input
                 type="date"
                 value={customEndDate}
-                onChange={(e) => setCustomEndDate(e.target.value)}
                 min={customStartDate}
                 className="w-full border-gray-300 focus:border-blue-400 focus:ring-blue-300 rounded-xl"
               />
@@ -280,6 +279,7 @@ export function StatsCards() {
                 <th className="p-3 text-left font-semibold">Doctor</th>
                 <th className="p-3 text-left font-semibold">Date</th>
                 <th className="p-3 text-left font-semibold">Time</th>
+                <th className="p-3 text-left font-semibold">Note</th>
                 <th className="p-3 text-left font-semibold">Cash</th>
                 <th className="p-3 text-left font-semibold">Online</th>
                 <th className="p-3 text-left font-semibold">Status</th>
@@ -288,7 +288,7 @@ export function StatsCards() {
             <tbody>
               {filteredAppointments.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="text-center py-8 text-gray-400">
+                  <td colSpan={9} className="text-center py-8 text-gray-400">
                     No appointments found for this filter.
                   </td>
                 </tr>
@@ -302,6 +302,9 @@ export function StatsCards() {
                       <td className="p-3">{apt.doctor}</td>
                       <td className="p-3">{apt.appointmentDate}</td>
                       <td className="p-3">{apt.appointmentTime}</td>
+                      <td className="p-3 text-gray-600 max-w-[150px] truncate" title={apt.note}>
+                        {apt.note || 'N/A'}
+                      </td>
                       <td className="p-3 text-green-700 font-semibold">₹{paid.cash.toLocaleString()}</td>
                       <td className="p-3 text-blue-700 font-semibold">₹{paid.online.toLocaleString()}</td>
                       <td className="p-3">
