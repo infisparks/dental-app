@@ -18,8 +18,7 @@ export default function GraphPage() {
   return (
     <div className="flex h-screen bg-gradient-to-br from-blue-50 via-white to-teal-50">
       <Sidebar activeSection={activeSection} onSectionChange={setActiveSection} userRole={role} />
-      
-        <Graph />
+      <Graph />
     </div>
   );
 } 

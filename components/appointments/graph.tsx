@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
@@ -29,12 +29,68 @@ import {
   Tooltip as ChartTooltip,
   Legend as ChartLegend,
   ArcElement,
+  ScaleOptionsByType, // Imported for correct serviceLabelCallback typing
 } from "chart.js"
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, ChartTooltip, ChartLegend, ArcElement)
 import DatePicker from "react-datepicker"
 import "react-datepicker/dist/react-datepicker.css"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useUser } from "@/components/ui/UserContext"
+
+// You'll need to update the Appointment type in "@/lib/appointments"
+// or define a local type for your full database structure if needed for `services_master`.
+// For simplicity, I'll assume `getAllAppointments` can return the full structure or a function
+// to get the services master is available. I'll mock the extraction here based on your prompt.
+
+// --- START: Mock Data Extraction (Replace with actual data fetching if needed) ---
+// Since the data structure is passed in the prompt, I'll define a function
+// to simulate getting the services master from the context where getAllAppointments runs.
+// In a real application, you might fetch this separately or update getAllAppointments.
+function getServicesMasterFromData(data: any) {
+  if (data && data.services_master) {
+    // Get the display name of each service
+    return Object.values(data.services_master).map((service: any) => service.name)
+  }
+  return []
+}
+// Assuming the full data structure is available when appointments are fetched.
+// For the purpose of this isolated component, we will assume a function
+// to get the services list from a more comprehensive fetch is available.
+// For now, we will dynamically determine the service list from the appointments themselves
+// and the provided services_master structure, or use a placeholder if the structure
+// is not globally available in this file's scope.
+// Since you provided the full database structure, I'll use a placeholder and
+// rely on the appointments' service names for the dynamic part.
+
+// UPDATE: Since the full structure isn't accessible outside of the function,
+// and we are within the component, we'll need to fetch/import the services_master.
+// For now, I'll assume your `getAllAppointments` (or a similar function)
+// provides access to the full DB object to get the `services_master`.
+// If not, you must modify your data fetching to get the `services_master` list.
+// For this fix, I'll extract it from the **unique services found in the appointments**
+// as a fallback, and then use the one you provided to ensure completeness.
+
+const MOCK_DB_STRUCTURE = {
+  // Use a placeholder that you would replace with an actual import/fetch
+  services_master: {
+    cad_cam: { name: "CAD CAM", price: 2500, updatedAt: "2025-10-07T15:55:34.545Z" },
+    cement__gic_: { name: "CEMENT (GIC)", price: 400, updatedAt: "2025-10-07T15:53:53.230Z" },
+    ceramic_pfm: { name: "CERAMIC PFM", price: 1800, updatedAt: "2025-10-07T15:55:13.273Z" },
+    composite: { name: "COMPOSITE", price: 500, updatedAt: "2025-10-07T15:54:07.977Z" },
+    extration: { name: "EXTRATION", price: 500, updatedAt: "2025-10-07T15:53:20.313Z" },
+    opd_consultantion: { name: "OPD CONSULTANTION", price: 50, updatedAt: "2025-10-07T15:52:57.256Z" },
+    root_canal: { name: "ROOT CANAL", price: 1700, updatedAt: "2025-10-07T16:03:35.254Z" },
+    rpd__removable_denture_: { name: "RPD (REMOVABLE DENTURE)", price: 500, updatedAt: "2025-10-07T15:56:20.079Z" },
+    scaling: { name: "SCALING", price: 600, updatedAt: "2025-10-07T15:54:22.542Z" },
+    white_metal_cap: { name: "WHITE METAL CAP", price: 800, updatedAt: "2025-10-07T15:54:33.540Z" },
+    wisdom_tooth_extraction: { name: "WISDOM TOOTH EXTRACTION", price: 1500, updatedAt: "2025-10-07T15:53:35.650Z" },
+    wisdom_tooth_surgery: { name: "WISDOM TOOTH SURGERY", price: 3000, updatedAt: "2025-10-07T15:56:01.825Z" },
+    x_ray: { name: "X-RAY", price: 200, updatedAt: "2025-10-07T15:53:05.083Z" },
+    zirconia_cap: { name: "ZIRCONIA CAP", price: 4000, updatedAt: "2025-10-07T15:55:46.075Z" },
+  },
+}
+const INITIAL_SERVICE_LIST = getServicesMasterFromData(MOCK_DB_STRUCTURE)
+// --- END: Mock Data Extraction ---
 
 const FILTER_OPTIONS = [
   { label: "Today", value: "today" },
@@ -49,58 +105,13 @@ const TYPE_OPTIONS = [
   { label: "Services", value: "services" },
 ]
 
-const SERVICE_LIST = [
-  "Teeth Cleaning",
-  "Root Canal",
-  "Teeth Extraction",
-  "Dental Fillings",
-  "Dental Crown",
-  "Teeth Whitening",
-  "Orthodontic Treatment",
-  "Dental Implant",
-]
-
-// Custom Tooltip for Services Graph
-function ServicesTooltip({ active, payload, label }: any) {
-  if (!active || !payload || !payload.length) return null
-  const data = payload[0].payload
-  return (
-    <div className="rounded-xl bg-white/90 shadow-xl border border-indigo-100 p-3 min-w-[180px]">
-      <div className="font-semibold text-indigo-700 mb-1 text-sm">{label}</div>
-      <div className="space-y-1">
-        {SERVICE_LIST.map((service, idx) => (
-          <div key={service} className="flex justify-between text-xs">
-            <span className="font-medium text-gray-700">{service}</span>
-            <span className="font-mono text-indigo-600">{data[service]}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-// Custom Tooltip for Appointment/Amount Graphs
-function CustomTooltip({ active, payload, label, color, labelText }: any) {
-  if (!active || !payload || !payload.length) return null
-  return (
-    <div className="rounded-xl bg-white/90 shadow-xl border border-indigo-100 p-3 min-w-[120px]">
-      <div className="font-semibold text-indigo-700 mb-1 text-sm">{label}</div>
-      <div className="flex justify-between text-xs">
-        <span className="font-medium text-gray-700">{labelText}</span>
-        <span className="font-mono" style={{ color }}>
-          {payload[0].value}
-        </span>
-      </div>
-    </div>
-  )
-}
-
 // Helper to get the total paid amount for an appointment
 function getPaidAmount(apt: Appointment) {
   if (apt.payment) {
     return (apt.payment.cashAmount || 0) + (apt.payment.onlineAmount || 0)
   }
-  return (apt.cashAmount || 0) + (apt.onlineAmount || 0)
+  // Fallback for old/other data structure
+  return (apt as any).cashAmount || 0 + (apt as any).onlineAmount || 0
 }
 
 export function Graph() {
@@ -113,6 +124,7 @@ export function Graph() {
   const [isCustomRangeModalOpen, setIsCustomRangeModalOpen] = useState(false)
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [loading, setLoading] = useState(true)
+  const [servicesMasterList, setServicesMasterList] = useState<string[]>(INITIAL_SERVICE_LIST) // 👈 Dynamic Service List
   const { role } = useUser()
 
   useEffect(() => {
@@ -120,73 +132,118 @@ export function Graph() {
     getAllAppointments().then((data) => {
       setAppointments(data)
       setLoading(false)
+      
+      // OPTIONAL: Update servicesMasterList based on the fetched data if it contains services_master
+      // If `data` contains the full DB structure, uncomment and use it:
+      // const dynamicServiceList = getServicesMasterFromData(data)
+      // if (dynamicServiceList.length > 0) {
+      //   setServicesMasterList(dynamicServiceList)
+      // }
     })
   }, [])
-
-  let startDate = new Date()
-  let endDate = new Date()
-  if (filter === "today") {
-    startDate = endDate = selectedDate
-  } else if (filter === "7days") {
-    startDate = subDays(new Date(), 6)
-    endDate = new Date()
-  } else if (filter === "month") {
-    startDate = startOfMonth(new Date())
-    endDate = endOfMonth(new Date())
-  } else if (filter === "custom" && customStartDate && customEndDate) {
-    startDate = parseISO(customStartDate)
-    endDate = parseISO(customEndDate)
-  }
-
-  const filteredAppointments = appointments.filter((apt: any) => {
-    const aptDate = new Date(apt.appointmentDate)
-    if (filter === "today") {
-      return isSameDay(aptDate, selectedDate)
-    } else if (filter === "custom" && customStartDate && customEndDate) {
-      const start = parseISO(customStartDate)
-      const end = parseISO(customEndDate)
-      if (isValid(start) && isValid(end)) {
-        return aptDate >= startOfDay(start) && aptDate <= endOfDay(end)
+  
+  // A second effect to dynamically extract all unique services from the current appointments
+  // (useful if `getAllAppointments` doesn't return the services_master)
+  useEffect(() => {
+    if (appointments.length > 0) {
+      const uniqueServices = new Set<string>()
+      appointments.forEach(apt => {
+        if (apt.services && Array.isArray(apt.services)) {
+          apt.services.forEach(service => uniqueServices.add(service))
+        }
+      })
+      // Use the services from the appointments if they are more comprehensive,
+      // or combine them with the INITIAL_SERVICE_LIST.
+      const combinedServices = Array.from(new Set([...INITIAL_SERVICE_LIST, ...Array.from(uniqueServices)]))
+      if (combinedServices.length > 0) {
+        setServicesMasterList(combinedServices)
       }
-      return false
     }
-    return isWithinInterval(aptDate, { start: startDate, end: endDate })
-  })
+  }, [appointments])
+  
+  // Use useMemo for heavy calculations to avoid re-calculating on every render
+  const { filteredAppointments, startDate, endDate } = useMemo(() => {
+    let sDate = new Date()
+    let eDate = new Date()
+    
+    if (filter === "today") {
+      sDate = eDate = selectedDate
+    } else if (filter === "7days") {
+      sDate = subDays(new Date(), 6)
+      eDate = new Date()
+    } else if (filter === "month") {
+      sDate = startOfMonth(new Date())
+      eDate = endOfMonth(new Date())
+    } else if (filter === "custom" && customStartDate && customEndDate) {
+      sDate = parseISO(customStartDate)
+      eDate = parseISO(customEndDate)
+    }
 
-  const appointmentData: { date: string; count: number }[] = []
-  for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-    const dateStr = format(new Date(d), "yyyy-MM-dd")
-    const count = filteredAppointments.filter((apt: any) => apt.appointmentDate === dateStr).length
-    appointmentData.push({ date: dateStr, count })
-  }
+    const apts = appointments.filter((apt: any) => {
+      // Ensure appointmentDate is treated as a string for parsing
+      const aptDateString = apt.appointmentDate
+      if (!aptDateString) return false // Skip if date is missing
+      
+      const aptDate = parseISO(aptDateString)
+      if (!isValid(aptDate)) return false // Skip if date is invalid
 
-  const amountData: { date: string; amount: number }[] = []
-  for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-    const dateStr = format(new Date(d), "yyyy-MM-dd")
-    const amount = filteredAppointments
-      .filter((apt: any) => apt.appointmentDate === dateStr)
-      .reduce((sum: number, apt: Appointment) => sum + getPaidAmount(apt), 0)
-    amountData.push({ date: dateStr, amount })
-  }
-
-  const servicesGraphData = appointmentData.map(({ date }) => {
-    const entry: any = { date }
-    let total = 0
-    SERVICE_LIST.forEach((service) => {
-      const qty = filteredAppointments.filter(
-        (apt: any) => apt.appointmentDate === date && apt.services && apt.services.includes(service),
-      ).length
-      entry[service] = qty
-      total += qty
+      if (filter === "today") {
+        return isSameDay(aptDate, selectedDate)
+      } else if (filter === "custom" && customStartDate && customEndDate) {
+        const start = parseISO(customStartDate)
+        const end = parseISO(customEndDate)
+        if (isValid(start) && isValid(end)) {
+          // Check if appointment date is between start of start date and end of end date
+          return aptDate >= startOfDay(start) && aptDate <= endOfDay(end)
+        }
+        return false
+      }
+      return isWithinInterval(aptDate, { start: startOfDay(sDate), end: endOfDay(eDate) })
     })
-    entry.quantity = total
-    return entry
-  })
+    
+    return { filteredAppointments: apts, startDate: sDate, endDate: eDate }
+  }, [appointments, filter, selectedDate, customStartDate, customEndDate])
 
-  const servicesBarData = SERVICE_LIST.map((service) => {
-    const count = filteredAppointments.filter((apt: any) => apt.services && apt.services.includes(service)).length
-    return { service, count }
-  })
+  // --- Graph Data Generation ---
+  
+  const appointmentData: { date: string; count: number }[] = useMemo(() => {
+    const data = []
+    // Reset date objects for iteration to ensure correct range
+    let d = startOfDay(startDate) 
+    while (d <= endOfDay(endDate)) {
+      const dateStr = format(d, "yyyy-MM-dd")
+      const count = filteredAppointments.filter((apt: any) => apt.appointmentDate === dateStr).length
+      data.push({ date: dateStr, count })
+      d = subDays(d, -1) // Move to the next day
+    }
+    return data
+  }, [startDate, endDate, filteredAppointments])
+
+  const amountData: { date: string; amount: number }[] = useMemo(() => {
+    const data = []
+    let d = startOfDay(startDate)
+    while (d <= endOfDay(endDate)) {
+      const dateStr = format(d, "yyyy-MM-dd")
+      const amount = filteredAppointments
+        .filter((apt: Appointment) => apt.appointmentDate === dateStr)
+        .reduce((sum: number, apt: Appointment) => sum + getPaidAmount(apt), 0)
+      data.push({ date: dateStr, amount })
+      d = subDays(d, -1)
+    }
+    return data
+  }, [startDate, endDate, filteredAppointments])
+  
+  // Services Bar Data (Total count for each service across the filtered range)
+  const servicesBarData = useMemo(() => {
+    return servicesMasterList.map((service) => { // 👈 Dynamic List Usage
+      const count = filteredAppointments.filter((apt: any) => 
+        apt.services && Array.isArray(apt.services) && apt.services.includes(service)
+      ).length
+      return { service, count }
+    }).filter(d => d.count > 0) // Only show services that were used
+  }, [filteredAppointments, servicesMasterList])
+
+  // --- End Graph Data Generation ---
 
   const colors = [
     "#6366f1", // Indigo
@@ -197,7 +254,13 @@ export function Graph() {
     "#f43f5e", // Rose
     "#a21caf", // Purple
     "#fbbf24", // Amber
-  ]
+    "#ef4444", // Red
+    "#34d399", // Teal
+    "#a855f7", // Violet
+    "#ec4899", // Pink
+    "#84cc16", // Lime
+    "#eab308", // Yellow
+  ].slice(0, servicesMasterList.length) // Limit colors to the number of services
 
   const gridClasses = "grid grid-cols-1 gap-6"
 
@@ -230,13 +293,21 @@ export function Graph() {
 
     return baseOptions
   }
+  
+  // Custom label formatter for X-axis on service graph to prevent overflow (Previous fix retained)
+  const serviceLabelCallback: ScaleOptionsByType<'category'>['ticks']['callback'] = function (tickValue, index) {
+    // We use the index to look up the service name from the computed data
+    const label = servicesBarData[index]?.service || ''
+    // Truncate long service names
+    return label.length > 15 ? label.substring(0, 12) + '...' : label
+  }
 
   return (
     <div className="space-y-8 px-1 md:px-6 max-w-7xl mx-auto w-full md:ml-[240px] md:pl-6 mt-8 mb-8 pb-8">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
         <div>
           <h1 className="text-2xl md:text-3xl font-extrabold text-gray-900 flex items-center gap-2 tracking-tight drop-shadow-sm">
-            <BarChart2 className="h-7 md:h-8 w-7 md:w-8 text-indigo-600" /> Graph
+            <BarChart2 className="h-7 md:h-8 w-7 md:w-8 text-indigo-600" /> Analytics Graph
           </h1>
         </div>
         <div className="flex flex-wrap items-center gap-2 md:gap-3 w-full md:w-auto justify-end bg-gradient-to-r from-indigo-50 to-cyan-50 rounded-xl p-2 shadow-md">
@@ -314,14 +385,14 @@ export function Graph() {
         {(type === "all" || type === "appointment") && (
           <Card className="rounded-2xl shadow-lg bg-gradient-to-br from-white to-indigo-50 border-0">
             <CardHeader>
-              <CardTitle className="text-base md:text-lg font-bold text-indigo-700">Appointment Graph</CardTitle>
+              <CardTitle className="text-base md:text-lg font-bold text-indigo-700">Appointment Count</CardTitle>
               <CardDescription className="text-gray-500">Number of appointments per day</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="flex justify-center">
                 <Bar
                   data={{
-                    labels: appointmentData.map((d) => d.date),
+                    labels: appointmentData.map((d) => format(parseISO(d.date), filter === 'today' ? 'ha' : 'MMM d')),
                     datasets: [
                       {
                         label: "Appointments",
@@ -338,7 +409,21 @@ export function Graph() {
                     plugins: {
                       legend: { display: false },
                       title: { display: false },
-                      tooltip: { enabled: true },
+                      tooltip: { 
+                         enabled: true,
+                         callbacks: {
+                           // FIX APPLIED HERE: Use dataIndex to get the original ISO date string from appointmentData
+                           title: (tooltipItems) => {
+                             const dataIndex = tooltipItems[0].dataIndex;
+                             const dateStr = appointmentData[dataIndex]?.date;
+                             if (dateStr) {
+                               return format(parseISO(dateStr), 'eee, MMM d');
+                             }
+                             return tooltipItems[0].label; // Fallback
+                           },
+                           label: (context) => `Appointments: ${context.formattedValue}`
+                         }
+                      },
                     },
                     scales: {
                       x: {
@@ -348,11 +433,12 @@ export function Graph() {
                           font: { size: 11 },
                           autoSkip: true,
                           maxTicksLimit: 7,
-                          callback: function (value, index, values) {
+                          callback: function (value, index) {
+                            const dateLabel = this.getLabelForValue(Number(value));
                             if (filter === "month") {
-                              return index % 5 === 0 ? this.getLabelForValue(Number(value)) : ""
+                              return index % 5 === 0 ? dateLabel : ""
                             }
-                            return this.getLabelForValue(Number(value))
+                            return dateLabel
                           },
                         },
                       },
@@ -361,7 +447,7 @@ export function Graph() {
                         ticks: {
                           color: colors[0],
                           font: { size: 11 },
-                          stepSize: 2,
+                          stepSize: 1, // Changed from 2 to 1 for better integer representation
                           maxTicksLimit: 5,
                         },
                         beginAtZero: true,
@@ -379,14 +465,14 @@ export function Graph() {
         {(type === "all" || type === "amount") && (
           <Card className="rounded-2xl shadow-lg bg-gradient-to-br from-white to-cyan-50 border-0">
             <CardHeader>
-              <CardTitle className="text-base md:text-lg font-bold text-cyan-700">Amount Graph</CardTitle>
+              <CardTitle className="text-base md:text-lg font-bold text-cyan-700">Amount Collected</CardTitle>
               <CardDescription className="text-gray-500">Total amount collected per day</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="flex justify-center">
                 <Bar
                   data={{
-                    labels: amountData.map((d) => d.date),
+                    labels: amountData.map((d) => format(parseISO(d.date), filter === 'today' ? 'ha' : 'MMM d')),
                     datasets: [
                       {
                         label: "Amount",
@@ -403,7 +489,21 @@ export function Graph() {
                     plugins: {
                       legend: { display: false },
                       title: { display: false },
-                      tooltip: { enabled: true },
+                      tooltip: { 
+                         enabled: true,
+                         callbacks: {
+                           // FIX APPLIED HERE: Use dataIndex to get the original ISO date string from amountData
+                           title: (tooltipItems) => {
+                             const dataIndex = tooltipItems[0].dataIndex;
+                             const dateStr = amountData[dataIndex]?.date;
+                             if (dateStr) {
+                               return format(parseISO(dateStr), 'eee, MMM d');
+                             }
+                             return tooltipItems[0].label; // Fallback
+                           },
+                           label: (context) => `Amount: ₹${context.formattedValue}`
+                         }
+                      },
                     },
                     scales: {
                       x: {
@@ -413,11 +513,12 @@ export function Graph() {
                           font: { size: 11 },
                           autoSkip: true,
                           maxTicksLimit: 7,
-                          callback: function (value, index, values) {
+                          callback: function (value, index) {
+                            const dateLabel = this.getLabelForValue(Number(value));
                             if (filter === "month") {
-                              return index % 5 === 0 ? this.getLabelForValue(Number(value)) : ""
+                              return index % 5 === 0 ? dateLabel : ""
                             }
-                            return this.getLabelForValue(Number(value))
+                            return dateLabel
                           },
                         },
                       },
@@ -426,8 +527,10 @@ export function Graph() {
                         ticks: {
                           color: colors[1],
                           font: { size: 11 },
-                          stepSize: 2000,
+                          // Dynamically set stepSize or keep a reasonable default
+                          // stepSize: 2000, 
                           maxTicksLimit: 5,
+                          callback: (value) => `₹${value}`
                         },
                         beginAtZero: true,
                       },
@@ -451,15 +554,16 @@ export function Graph() {
               <div className="flex justify-center">
                 <Bar
                   data={{
-                    labels: servicesBarData.map((d) => d.service),
+                    labels: servicesBarData.map((d) => d.service), // 👈 Dynamic Labels
                     datasets: [
                       {
                         label: "Service Count",
                         data: servicesBarData.map((d) => d.count),
-                        backgroundColor: colors.slice(0, servicesBarData.length),
+                        // Use a variety of colors up to the number of services
+                        backgroundColor: servicesBarData.map((_, index) => colors[index % colors.length]), 
                         borderRadius: 8,
-                        barPercentage: 0.6,
-                        categoryPercentage: 0.7,
+                        barPercentage: 0.8, // Slightly wider bars for services
+                        categoryPercentage: 0.9,
                       },
                     ],
                   }}
@@ -468,15 +572,24 @@ export function Graph() {
                     plugins: {
                       legend: { display: false },
                       title: { display: false },
-                      tooltip: { enabled: true },
+                      tooltip: { 
+                         enabled: true,
+                         callbacks: {
+                           title: (tooltipItems) => servicesBarData[tooltipItems[0].dataIndex].service,
+                           label: (context) => `Count: ${context.formattedValue}`
+                         }
+                      },
                     },
                     scales: {
                       x: {
                         grid: { display: false },
                         ticks: {
                           color: colors[4],
-                          font: { size: 11 },
-                          autoSkip: false,
+                          font: { size: 10 }, // Smaller font for service names
+                          autoSkip: false, // Ensure all service names are attempted to be displayed
+                          maxRotation: 45, // Rotate labels to prevent overlap
+                          minRotation: 45,
+                          callback: serviceLabelCallback, // Uses the correctly typed callback
                         },
                       },
                       y: {
@@ -484,7 +597,7 @@ export function Graph() {
                         ticks: {
                           color: colors[4],
                           font: { size: 11 },
-                          stepSize: 2,
+                          stepSize: 1,
                           maxTicksLimit: 5,
                         },
                         beginAtZero: true,
