@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { subscribeToAppointments, type Appointment } from "@/lib/appointments"
-import { Calendar, DollarSign, XCircle, CalendarDays } from "lucide-react"
+import { Calendar, DollarSign, XCircle, CalendarDays, FileText } from "lucide-react"
 import {
   format,
   isWithinInterval,
@@ -18,11 +18,18 @@ import {
   startOfDay,
   endOfDay,
   isValid,
+  subDays,
 } from "date-fns"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
+// --- PDF IMPORTS ---
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
+// -------------------
+
 const getFilters = (userRole: string) => {
   const baseFilters = [
+    { label: "Last 7 Days", value: "last7days" },
     { label: "Today", value: "today" },
     { label: "This Week", value: "week" },
     { label: "This Month", value: "month" },
@@ -35,13 +42,15 @@ const getFilters = (userRole: string) => {
   return baseFilters
 }
 
+
 export function StatsCards() {
   const [appointments, setAppointments] = useState<Appointment[]>([])
-  const [filter, setFilter] = useState("today")
+  const [filter, setFilter] = useState("last7days")
   const [customStartDate, setCustomStartDate] = useState("")
   const [customEndDate, setCustomEndDate] = useState("")
   const [isCustomRangeModalOpen, setIsCustomRangeModalOpen] = useState(false)
-  const [userRole, setUserRole] = useState("admin") // You can get this from your auth context
+  const [userRole, setUserRole] = useState("admin")
+  const [isExporting, setIsExporting] = useState(false) 
 
   useEffect(() => {
     const unsubscribe = subscribeToAppointments((data) => {
@@ -91,8 +100,11 @@ export function StatsCards() {
   if (filter === "today") {
     currentStartDate = startOfDay(today)
     currentEndDate = endOfDay(today)
+  } else if (filter === "last7days") {
+    currentStartDate = startOfDay(subDays(today, 6))
+    currentEndDate = endOfDay(today)
   } else if (filter === "week") {
-    currentStartDate = startOfWeek(today, { weekStartsOn: 1 }) // Monday as start of week
+    currentStartDate = startOfWeek(today, { weekStartsOn: 1 })
     currentEndDate = endOfWeek(today, { weekStartsOn: 1 })
   } else if (filter === "month") {
     currentStartDate = startOfMonth(today)
@@ -109,7 +121,7 @@ export function StatsCards() {
   // Apply the date range filtering
   if (currentStartDate && currentEndDate) {
     filteredAppointments = appointments.filter((apt) => {
-      if (!apt.appointmentDate) return false // skip if date missing
+      if (!apt.appointmentDate) return false
       const aptDate = parseISO(apt.appointmentDate)
       return isWithinInterval(aptDate, { start: currentStartDate!, end: currentEndDate! })
     })
@@ -122,58 +134,242 @@ export function StatsCards() {
   const totalAppointments = filteredAppointments.length
 
   const handleClearFilters = () => {
-    setFilter("today")
+    setFilter("last7days")
     setCustomStartDate("")
     setCustomEndDate("")
   }
 
+  // --- PDF EXPORT LOGIC ---
+  const handleExportToPDF = async () => {
+    setIsExporting(true);
+    // Use 'pt' unit (points) for precise control over A4 dimensions
+    const pdf = new jsPDF('p', 'pt', 'a4'); 
+
+    // A4 dimensions in points
+    const a4Width = 595.28;
+    const a4Height = 841.89;
+    const letterheadImage = '/letterhead.png';
+    
+    // --- OFFSETS AND MARGINS ---
+    const topOffsetPt = 180; 
+    const margin = 20; 
+    const printableWidth = a4Width - (2 * margin);
+    const printableHeight = a4Height - topOffsetPt - (2 * margin); 
+
+    // 1. Determine the filter label and date range
+    let filterLabel = getFilters(userRole).find(f => f.value === filter)?.label || 'Custom Range';
+    let dateRange = '';
+    if (currentStartDate && currentEndDate) {
+      dateRange = `${format(currentStartDate, "MMM dd, yyyy")} to ${format(currentEndDate, "MMM dd, yyyy")}`;
+    }
+
+    // 2. Create a temporary element to render the content for html2canvas
+    const tempDiv = document.createElement('div');
+    tempDiv.style.position = 'absolute';
+    tempDiv.style.left = '-9999px';
+    // CRITICAL FIX: Ensure the main container for html2canvas has a white background
+    tempDiv.style.backgroundColor = '#ffffff'; 
+    document.body.appendChild(tempDiv);
+
+    // --- PROFESSIONAL HTML CONTENT WITH FINAL STYLING AND LAYOUT ---
+    const reportContentHtml = `
+      <div style="padding: 0; margin: 0; font-family: Arial, Helvetica, sans-serif; color: #333333; width: ${printableWidth}pt; background-color: #ffffff;">
+        
+        <h1 style="font-size: 14pt; font-weight: bold; margin-bottom: 10pt; color: #1f2937; text-align: center;">
+          Appointment Details Report
+        </h1>
+        <div style="font-size: 9pt; margin-bottom: 15pt; color: #4b5563; border-bottom: 1px solid #cccccc; padding-bottom: 5pt; text-align: center; background-color: #ffffff;">
+          <strong>Filter:</strong> ${filterLabel} | 
+          <strong>Range:</strong> ${dateRange} | 
+          <strong>Generated:</strong> ${format(new Date(), 'dd MMM yyyy HH:mm')}
+        </div>
+
+        <table style="width: 100%; border-collapse: collapse; font-size: 8pt; margin-bottom: 20pt; border: 1px solid #cccccc; background-color: #ffffff;">
+          <thead>
+            <tr style="background-color: #f8f8f8;">
+              <th style="padding: 6pt 5pt; text-align: left; border-right: 1px solid #cccccc; color: #000000; font-weight: bold; width: 5%;">#</th>
+              <th style="padding: 6pt 5pt; text-align: left; border-right: 1px solid #cccccc; color: #000000; font-weight: bold; width: 20%;">Patient</th>
+              <th style="padding: 6pt 5pt; text-align: left; border-right: 1px solid #cccccc; color: #000000; font-weight: bold; width: 15%;">Date</th>
+              <th style="padding: 6pt 5pt; text-align: left; border-right: 1px solid #cccccc; color: #000000; font-weight: bold; width: 10%;">Time</th>
+              <th style="padding: 6pt 5pt; text-align: right; border-right: 1px solid #cccccc; color: #000000; font-weight: bold; width: 15%;">Cash</th>
+              <th style="padding: 6pt 5pt; text-align: right; border-right: 1px solid #cccccc; color: #000000; font-weight: bold; width: 15%;">Online</th>
+              <th style="padding: 6pt 5pt; text-align: left; color: #000000; font-weight: bold; width: 20%;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+          ${filteredAppointments.length === 0 ? `
+            <tr>
+              <td colSpan="7" style="text-align: center; padding: 10pt; color: #9a9a9a; border-top: 1px solid #cccccc; background-color: #ffffff;">
+                No appointments found for this filter.
+              </td>
+            </tr>
+          ` : (
+            filteredAppointments.map((apt, idx) => {
+              const paid = getPaid(apt);
+              const cellBorder = '1px solid #dddddd';
+
+              return `
+                <tr style="background-color: #ffffff;">
+                  <td style="padding: 5pt; border-right: ${cellBorder}; border-top: ${cellBorder}; color: #333333;">${idx + 1}</td>
+                  <td style="padding: 5pt; border-right: ${cellBorder}; border-top: ${cellBorder}; color: #333333; font-weight: bold;">${apt.patientName}</td>
+                  <td style="padding: 5pt; border-right: ${cellBorder}; border-top: ${cellBorder}; color: #333333;">${apt.appointmentDate}</td>
+                  <td style="padding: 5pt; border-right: ${cellBorder}; border-top: ${cellBorder}; color: #333333;">${apt.appointmentTime}</td>
+                  <td style="padding: 5pt; text-align: right; border-right: ${cellBorder}; border-top: ${cellBorder}; color: #059669; font-weight: bold;">₹${paid.cash.toLocaleString()}</td>
+                  <td style="padding: 5pt; text-align: right; border-right: ${cellBorder}; border-top: ${cellBorder}; color: #1d4ed8; font-weight: bold;">₹${paid.online.toLocaleString()}</td>
+                  <td style="padding: 5pt; border-top: ${cellBorder}; color: ${apt.status === "completed" ? '#059669' : '#9a3412'}; font-weight: bold;">
+                    ${apt.status ? apt.status.charAt(0).toUpperCase() + apt.status.slice(1) : "Unknown"}
+                  </td>
+                </tr>
+              `;
+            }).join('')
+          )}
+          </tbody>
+        </table>
+
+        <h2 style="font-size: 14pt; font-weight: bold; margin: 20pt 0 10pt 0; color: #374151; text-align: center;">
+          Appointment Statistics Report
+        </h2>
+        <table style="width: 100%; max-width: 400pt; margin: 0 auto; border-collapse: collapse; font-size: 9pt; border: 1px solid #cccccc; background-color: #ffffff;">
+          <tbody>
+            <tr style="background-color: #f5f5f5;">
+              <td style="padding: 8pt; border-bottom: 1px solid #cccccc; font-weight: bold; width: 25%;">Total Appointments</td>
+              <td style="padding: 8pt; text-align: right; border-bottom: 1px solid #cccccc; width: 25%;">
+                ${totalAppointments}
+              </td>
+              <td style="padding: 8pt; border-bottom: 1px solid #cccccc; font-weight: bold; width: 25%;">Total Cash Collected</td>
+              <td style="padding: 8pt; text-align: right; border-bottom: 1px solid #cccccc; width: 25%;">
+                ₹${totalCash.toLocaleString()}
+              </td>
+            </tr>
+            <tr style="background-color: #ffffff;">
+              <td style="padding: 8pt; border-bottom: 1px solid #cccccc; font-weight: bold;">Total Online Collected</td>
+              <td style="padding: 8pt; text-align: right; border-bottom: 1px solid #cccccc;">
+                ₹${totalOnline.toLocaleString()}
+              </td>
+              <td style="padding: 8pt; border-bottom: 1px solid #cccccc; font-weight: bold;">Total Amount Collected</td>
+              <td style="padding: 8pt; text-align: right; font-weight: bold; color: #059669; border-bottom: 1px solid #cccccc;">
+                ₹${totalAmount.toLocaleString()}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    tempDiv.innerHTML = reportContentHtml;
+    
+    // 3. Render the HTML to canvas
+    const canvas = await html2canvas(tempDiv, {
+      scale: 2, 
+      useCORS: true,
+      logging: false,
+      backgroundColor: '#ffffff', // Explicitly set white background for canvas
+    });
+    
+    // --- FILE SIZE FIX: Use JPEG with lower quality for compression ---
+    const imgData = canvas.toDataURL('image/jpeg', 0.5); // 0.5 quality drastically reduces file size
+    const contentWidth = canvas.width;
+    const contentHeight = canvas.height;
+
+    const contentRatio = printableWidth / contentWidth;
+    const finalContentHeight = contentHeight * contentRatio;
+
+    // 4. Add Letterhead Background (Full A4 size)
+    pdf.addImage(letterheadImage, 'PNG', 0, 0, a4Width, a4Height);
+
+    // 5. Add Content over the Letterhead (Multi-page handling)
+    let heightLeft = finalContentHeight;
+    let position = 0; 
+
+    while (heightLeft > 0) {
+        const contentStartX = margin;
+        const contentStartY = topOffsetPt + margin;
+
+        let imgY = contentStartY - position; 
+        
+        pdf.addImage(imgData, 'JPEG', contentStartX, imgY, printableWidth, finalContentHeight);
+
+        heightLeft -= printableHeight;
+        position += printableHeight;
+
+        if (heightLeft > 0) {
+            pdf.addPage();
+            pdf.addImage(letterheadImage, 'PNG', 0, 0, a4Width, a4Height);
+        }
+    }
+
+    // 6. Save the PDF
+    pdf.save(`Appointment_Report_${format(today, 'yyyyMMdd_HHmm')}.pdf`);
+
+    // 7. Cleanup
+    document.body.removeChild(tempDiv);
+    setIsExporting(false);
+  };
+  // -------------------
+
+
   return (
     <div className="space-y-8 mb-8">
       {/* Filter Controls */}
-      <div className="flex flex-wrap items-center gap-4 p-4 rounded-xl shadow-sm bg-gradient-to-r from-gray-50 to-white border border-gray-200">
-        <label className="font-semibold text-gray-700 sr-only">Filter by Date Range:</label>
-        <Select value={filter} onValueChange={handleFilterChange}>
-          <SelectTrigger className="w-[180px] md:w-[200px] bg-white border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-400">
-            <SelectValue placeholder="Select Date Range" />
-          </SelectTrigger>
-          <SelectContent className="rounded-lg shadow-lg">
-            {getFilters(userRole).map((f) => (
-              <SelectItem key={f.value} value={f.value} className="hover:bg-blue-50">
-                {f.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl shadow-sm bg-gradient-to-r from-gray-50 to-white border border-gray-200">
+        <div className="flex items-center gap-4">
+          <label className="font-semibold text-gray-700 sr-only">Filter by Date Range:</label>
+          <Select value={filter} onValueChange={handleFilterChange}>
+            <SelectTrigger className="w-[180px] md:w-[200px] bg-white border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-400">
+              <SelectValue placeholder="Select Date Range" />
+            </SelectTrigger>
+            <SelectContent className="rounded-lg shadow-lg">
+              {getFilters(userRole).map((f) => (
+                <SelectItem key={f.value} value={f.value} className="hover:bg-blue-50">
+                  {f.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
-        {filter === "custom" && customStartDate && customEndDate && (
-          <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border-2 border-blue-200 shadow-sm">
-            <CalendarDays className="h-4 w-4 text-blue-500" />
-            <span className="text-xs text-blue-700 font-medium">
-              {format(parseISO(customStartDate), "MMM dd")} - {format(parseISO(customEndDate), "MMM dd")}
-            </span>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setIsCustomRangeModalOpen(true)}
-              className="text-xs px-2 py-1 h-6 border-blue-300 text-blue-600 hover:bg-blue-50"
-            >
-              Change
-            </Button>
-          </div>
-        )}
+          {filter === "custom" && customStartDate && customEndDate && (
+            <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border-2 border-blue-200 shadow-sm">
+              <CalendarDays className="h-4 w-4 text-blue-500" />
+              <span className="text-xs text-blue-700 font-medium">
+                {format(parseISO(customStartDate), "MMM dd")} - {format(parseISO(customEndDate), "MMM dd")}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setIsCustomRangeModalOpen(true)}
+                className="text-xs px-2 py-1 h-6 border-blue-300 text-blue-600 hover:bg-blue-50"
+              >
+                Change
+              </Button>
+            </div>
+          )}
+        </div>
 
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleClearFilters}
-          className="flex items-center gap-1 text-gray-600 border-gray-300 hover:text-red-500 hover:border-red-300 transition-colors duration-200 bg-transparent"
-          aria-label="Clear filters"
-        >
-          <XCircle className="h-4 w-4" />
-          <span className="hidden sm:inline">Clear</span>
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* EXPORT TO PDF BUTTON */}
+          <Button
+            onClick={handleExportToPDF}
+            disabled={isExporting}
+            className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg shadow-md transition-colors duration-200"
+          >
+            <FileText className="h-4 w-4" />
+            {isExporting ? "Generating PDF..." : "Export to PDF"}
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleClearFilters}
+            className="flex items-center gap-1 text-gray-600 border-gray-300 hover:text-red-500 hover:border-red-300 transition-colors duration-200 bg-transparent"
+            aria-label="Clear filters"
+          >
+            <XCircle className="h-4 w-4" />
+            <span className="hidden sm:inline">Clear</span>
+          </Button>
+        </div>
       </div>
-
+      
+      {/* ... (Modal and Stats Cards remain unchanged) ... */}
       <Dialog open={isCustomRangeModalOpen} onOpenChange={setIsCustomRangeModalOpen}>
         <DialogContent className="max-w-md bg-gradient-to-br from-white to-blue-50 border-0 rounded-2xl shadow-2xl">
           <DialogHeader>
@@ -198,6 +394,7 @@ export function StatsCards() {
                 type="date"
                 value={customEndDate}
                 min={customStartDate}
+                onChange={(e) => setCustomEndDate(e.target.value)}
                 className="w-full border-gray-300 focus:border-blue-400 focus:ring-blue-300 rounded-xl"
               />
             </div>
@@ -214,7 +411,7 @@ export function StatsCards() {
                 variant="outline"
                 onClick={() => {
                   setIsCustomRangeModalOpen(false)
-                  setFilter("today")
+                  setFilter("last7days")
                   setCustomStartDate("")
                   setCustomEndDate("")
                 }}
@@ -267,9 +464,9 @@ export function StatsCards() {
           </CardHeader>
         </Card>
       </div>
-      {/* Appointments List */}
+      {/* Appointments List (On-Screen View)*/}
       <div className="mt-8">
-        <h2 className="text-lg font-bold text-gray-800 mb-4">Appointments List</h2>
+        <h2 className="text-lg font-bold text-gray-800 mb-4">Appointments List (On-Screen View)</h2>
         <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-md">
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50">
