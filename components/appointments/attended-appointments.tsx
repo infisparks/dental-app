@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Eye, Search, Calendar, Filter, CheckCircle, TrendingUp, CalendarDays, Pencil, ChevronDown } from "lucide-react"
+import { Eye, Search, Calendar, Filter, CheckCircle, TrendingUp, CalendarDays, Pencil, ChevronDown, Send, FileText } from "lucide-react" // Added Send/FileText
 
 // Firebase Imports
 import { getDatabase, ref, set, get, onValue, off } from "firebase/database"
@@ -24,9 +24,16 @@ import {
   startOfYear,
   endOfYear,
   isValid,
+  subDays,
 } from "date-fns"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
+// --- UPDATED: Replaced mock hook with real UserContext import ---
+import { useUser } from '@/components/ui/UserContext'
+
+// --- NEW: Import html2canvas ---
+import html2canvas from 'html2canvas';
+import React from "react"
 
 // Mock imports for demonstration completeness 
 const InvoiceModal = ({ isOpen, onClose, appointment }: any) => isOpen ? (
@@ -38,8 +45,6 @@ const InvoiceModal = ({ isOpen, onClose, appointment }: any) => isOpen ? (
         </div>
     </div>
 ) : null;
-// Mock useUser context hook
-const useUser = () => ({ role: 'admin' });
 
 
 // --- INTERFACE DEFINITION ---
@@ -225,13 +230,18 @@ const getFilterDisplay = (filter: string, dateInfo: any) => {
 
 // --- AttendedAppointments Component ---
 export function AttendedAppointments() {
+  const { role } = useUser()
+  const today = format(new Date(), "yyyy-MM-dd")
+  
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [filteredAppointments, setFilteredAppointments] = useState<Appointment[]>([])
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null)
   const [isInvoiceOpen, setIsInvoiceOpen] = useState(false)
-  const [dateFilter, setDateFilter] = useState("all")
-  const [specificDate, setSpecificDate] = useState("")
+  
+  const [dateFilter, setDateFilter] = useState(role === "staff" ? "today" : "all")
+  const [specificDate, setSpecificDate] = useState(role === "staff" ? today : "")
+  
   const [weekDate, setWeekDate] = useState("")
   const [monthDate, setMonthDate] = useState("")
   const [yearDate, setYearDate] = useState("")
@@ -241,51 +251,23 @@ export function AttendedAppointments() {
   const [isEditOpen, setIsEditOpen] = useState(false)
   const [editData, setEditData] = useState<AppointmentWithPaymentFields | null>(null)
   const [isSaving, setIsSaving] = useState(false)
+  const [isSendingDPR, setIsSendingDPR] = useState(false)
   
   const [doctorOptions, setDoctorOptions] = useState<string[]>([])
   const [serviceOptions, setServiceOptions] = useState<string[]>([])
   
   const [isServicesOpen, setIsServicesOpen] = useState(false)
-  const { role } = useUser()
-  const today = format(new Date(), "yyyy-MM-dd")
   const monthInputRef = useRef<HTMLInputElement>(null)
+  const dprReportRef = useRef<HTMLDivElement>(null); // New ref for the hidden report
 
-  useEffect(() => {
-    const unsubscribe = subscribeToAppointments((data) => {
-      const attendedAppointments = data.filter((apt) => apt.status === "completed")
-      setAppointments(attendedAppointments)
-      applyFilters(
-        attendedAppointments,
-        searchTerm,
-        dateFilter,
-        specificDate,
-        weekDate,
-        monthDate,
-        yearDate,
-        customStartDate,
-        customEndDate,
-      )
-    })
-
-    return () => unsubscribe()
-  }, [searchTerm, dateFilter, specificDate, weekDate, monthDate, yearDate, customStartDate, customEndDate])
-
-  useEffect(() => {
-    const fetchMasterData = async () => {
-      try {
-        const doctors = await getDoctorOptionsFromDB()
-        const services = await getServiceOptionsFromDB()
-        setDoctorOptions(doctors)
-        setServiceOptions(services)
-      } catch (error) {
-        console.error("Failed to fetch master doctor/service data:", error)
-        setDoctorOptions([])
-        setServiceOptions([])
-      }
+  const getPaidAmount = (apt: Appointment) => {
+    if (apt.payment) {
+      return (apt.payment.cashAmount || 0) + (apt.payment.onlineAmount || 0)
     }
-    fetchMasterData()
-  }, []) 
+    return (apt.cashAmount || 0) + (apt.onlineAmount || 0)
+  }
 
+  // --- UPDATED: applyFilters now uses role from component scope ---
   const applyFilters = (
     appointmentsList: Appointment[],
     search: string,
@@ -300,9 +282,17 @@ export function AttendedAppointments() {
     let filtered = appointmentsList
     const now = new Date()
 
+    // --- UPDATED: Logic is now driven by the 'role' const ---
     if (role === "staff") {
-      filtered = filtered.filter((apt) => format(new Date(apt.appointmentDate), "yyyy-MM-dd") === today)
+      // Staff role is strictly filtered to today
+      const todayStr = format(now, "yyyy-MM-dd");
+      filtered = filtered.filter((apt) => {
+          const aptDate = new Date(apt.appointmentDate);
+          if (!isValid(aptDate)) return false;
+          return format(aptDate, "yyyy-MM-dd") === todayStr;
+      });
     } else {
+      // Other roles can use the date filter
       switch (filter) {
         case "today":
           const targetDate = specDate ? new Date(`${specDate}T00:00:00`) : now;
@@ -353,6 +343,7 @@ export function AttendedAppointments() {
           }
           break
         default:
+          // "all" filter, no date filtering
           break
       }
     }
@@ -370,6 +361,59 @@ export function AttendedAppointments() {
 
     setFilteredAppointments(filtered)
   }
+
+  // --- UPDATED: useEffect now depends on 'role' and 'today' ---
+  useEffect(() => {
+    const unsubscribe = subscribeToAppointments((data) => {
+      const attendedAppointments = data.filter((apt) => apt.status === "completed")
+      setAppointments(attendedAppointments) // Store all attended
+      
+      // Enforce "today" filter if role is "staff"
+      const effectiveDateFilter = role === "staff" ? "today" : dateFilter;
+      const effectiveSpecificDate = role === "staff" ? today : specificDate;
+      
+      applyFilters(
+        attendedAppointments, // Filter from all attended
+        searchTerm,
+        effectiveDateFilter,
+        effectiveSpecificDate,
+        weekDate,
+        monthDate,
+        yearDate,
+        customStartDate,
+        customEndDate,
+      )
+    })
+
+    return () => unsubscribe()
+  }, [
+    searchTerm, 
+    dateFilter, 
+    specificDate, 
+    weekDate, 
+    monthDate, 
+    yearDate, 
+    customStartDate, 
+    customEndDate,
+    role, // Added role
+    today // Added today
+  ])
+
+  useEffect(() => {
+    const fetchMasterData = async () => {
+      try {
+        const doctors = await getDoctorOptionsFromDB()
+        const services = await getServiceOptionsFromDB()
+        setDoctorOptions(doctors)
+        setServiceOptions(services)
+      } catch (error) {
+        console.error("Failed to fetch master doctor/service data:", error)
+        setDoctorOptions([])
+        setServiceOptions([])
+      }
+    }
+    fetchMasterData()
+  }, []) 
 
   const handleViewInvoice = (appointment: Appointment) => {
     setSelectedAppointment(appointment)
@@ -438,19 +482,45 @@ export function AttendedAppointments() {
     }
   }
 
-  const getPaidAmount = (apt: Appointment) => {
-    if (apt.payment) {
-      return (apt.payment.cashAmount || 0) + (apt.payment.onlineAmount || 0)
-    }
-    return (apt.cashAmount || 0) + (apt.onlineAmount || 0)
-  }
+  // --- UPDATED: Moved calculations to useMemo ---
+  const dprStats = React.useMemo(() => {
+    // Today's stats (uses filteredAppointments, which is already today's for staff)
+    const totalRevenueToday = filteredAppointments.reduce((sum, apt) => sum + getPaidAmount(apt), 0);
+    const totalAppointmentsToday = filteredAppointments.length;
+
+    // Last 7 Days stats (uses the full 'appointments' list)
+    const today = new Date();
+    const sevenDaysAgo = startOfDay(subDays(today, 6)); 
+    const todayEnd = endOfDay(today);
+
+    const last7DaysAppointments = appointments.filter(apt => {
+      const aptDate = new Date(apt.appointmentDate);
+      if (!isValid(aptDate)) return false;
+      return aptDate >= sevenDaysAgo && aptDate <= todayEnd;
+    });
+
+    const totalRevenue7Days = last7DaysAppointments.reduce((sum, apt) => sum + getPaidAmount(apt), 0);
+    const totalAppointments7Days = last7DaysAppointments.length;
+
+    return {
+      totalRevenueToday,
+      totalAppointmentsToday,
+      totalRevenue7Days,
+      totalAppointments7Days,
+      dprDate: format(new Date(), 'EEEE, MMMM dd, yyyy')
+    };
+  }, [appointments, filteredAppointments]);
+
 
   const getTotalAmount = () => {
-    return filteredAppointments.reduce((sum, apt) => sum + getPaidAmount(apt), 0)
+    // This function can now just use the memoized value
+    return dprStats.totalRevenueToday;
   }
 
   const resetDateInputs = () => {
-    setSpecificDate("")
+    if (role !== 'staff') {
+      setSpecificDate("")
+    }
     setWeekDate("")
     setMonthDate("")
     setYearDate("")
@@ -472,6 +542,84 @@ export function AttendedAppointments() {
     }
   }
 
+  // --- NEW: Function to send DPR as Base64 Image ---
+  const handleSendDPR = async () => {
+    if (!dprReportRef.current) {
+      alert("DPR template not found. Please refresh.");
+      return;
+    }
+    setIsSendingDPR(true);
+
+    try {
+      // 1. Generate Canvas from the hidden div
+      const canvas = await html2canvas(dprReportRef.current, {
+        scale: 2, // Higher scale for better quality
+        useCORS: true,
+        backgroundColor: '#ffffff' // Ensure it has a white background
+      });
+
+      // 2. Get Base64 Image Data
+      // We get the full Data URL first
+      const dataUrl = canvas.toDataURL("image/png");
+      
+      // Extract raw base64 data by removing the prefix
+      const base64Data = dataUrl.split(',')[1];
+
+      if (!base64Data) {
+        throw new Error("Failed to extract base64 data from canvas.");
+      }
+
+      // 3. Create Caption (as text fallback)
+      const caption = `
+*Dental Clinic - Daily Performance Report*
+*Date:* ${dprStats.dprDate}
+
+*TODAY'S VERIFICATION*
+- *Total Attended:* ${dprStats.totalAppointmentsToday}
+- *Total Revenue:* ₹${dprStats.totalRevenueToday.toLocaleString()}
+
+*LAST 7 DAY PROGRESS*
+- *Total Attended:* ${dprStats.totalAppointments7Days}
+- *Total Revenue:* ₹${dprStats.totalRevenue7Days.toLocaleString()}
+
+_This is an automated report._
+      `;
+
+      // 4. Create API Payload
+      const payload = {
+        number: "919958399157",
+        mediatype: "image",
+        mimetype: "image/png",
+        caption: caption.trim(),
+        media: base64Data, // Send the raw base64 data
+        fileName: `DPR_${today}.png`
+      };
+
+      // 5. Send to API
+      const response = await fetch("https://evo.infispark.in/message/sendMedia/medzeal", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": process.env.NEXT_PUBLIC_WHATSAPP_API_KEY || ""
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.ok) {
+        alert("DPR Image sent successfully!");
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.message || "Failed to send DPR Image");
+      }
+    } catch (error: any) {
+      console.error("Error sending DPR Image:", error);
+      alert(`Error: ${error.message}`);
+    } finally {
+      setIsSendingDPR(false);
+    }
+  };
+
+
   const filterDateInfo = {
     filter: dateFilter,
     specificDate,
@@ -485,6 +633,65 @@ export function AttendedAppointments() {
 
   return (
     <div className="space-y-6 px-1 md:px-0 max-w-7xl mx-auto w-full">
+      
+      {/* --- NEW: Hidden DPR Report Div for html2canvas --- */}
+      {/* This div is positioned off-screen and will be used to generate the image */}
+      <div 
+        ref={dprReportRef} 
+        style={{
+          position: 'absolute', 
+          left: '-9999px', 
+          top: 0, 
+          width: '400px', 
+          padding: '20px', 
+          backgroundColor: 'white',
+          fontFamily: 'Arial, sans-serif',
+          color: '#333'
+        }}
+      >
+        <div style={{ textAlign: 'center', borderBottom: '2px solid #007bff', paddingBottom: '10px', marginBottom: '15px' }}>
+          <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: '#007bff', margin: 0 }}>
+            Dental Clinic
+          </h2>
+          <h3 style={{ fontSize: '16px', fontWeight: 'bold', margin: '5px 0 0 0' }}>
+            Daily Performance Report
+          </h3>
+          <p style={{ fontSize: '12px', color: '#555', margin: '5px 0 0 0' }}>
+            {dprStats.dprDate}
+          </p>
+        </div>
+        
+        <div style={{ marginBottom: '15px', border: '1px solid #eee', padding: '10px', borderRadius: '5px' }}>
+          <h4 style={{ fontSize: '14px', fontWeight: 'bold', margin: '0 0 10px 0', color: '#333', borderBottom: '1px solid #eee', paddingBottom: '5px' }}>
+            TODAY'S VERIFICATION
+          </h4>
+          <div style={{ fontSize: '14px', marginBottom: '5px' }}>
+            <span style={{ fontWeight: 'bold' }}>Total Attended:</span> {dprStats.totalAppointmentsToday}
+          </div>
+          <div style={{ fontSize: '14px' }}>
+            <span style={{ fontWeight: 'bold' }}>Total Revenue:</span> ₹{dprStats.totalRevenueToday.toLocaleString()}
+          </div>
+        </div>
+        
+        <div style={{ border: '1px solid #eee', padding: '10px', borderRadius: '5px' }}>
+          <h4 style={{ fontSize: '14px', fontWeight: 'bold', margin: '0 0 10px 0', color: '#333', borderBottom: '1px solid #eee', paddingBottom: '5px' }}>
+            LAST 7 DAY PROGRESS
+          </h4>
+          <div style={{ fontSize: '14px', marginBottom: '5px' }}>
+            <span style={{ fontWeight: 'bold' }}>Total Attended:</span> {dprStats.totalAppointments7Days}
+          </div>
+          <div style={{ fontSize: '14px' }}>
+            <span style={{ fontWeight: 'bold' }}>Total Revenue:</span> ₹{dprStats.totalRevenue7Days.toLocaleString()}
+          </div>
+        </div>
+
+        <p style={{ fontSize: '10px', color: '#888', textAlign: 'center', marginTop: '15px' }}>
+          _This is an automated report._
+        </p>
+      </div>
+      {/* --- End of Hidden DPR Div --- */}
+
+
       <Card className="shadow-2xl border-0 bg-gradient-to-br from-white via-teal-50 to-blue-50 rounded-3xl">
         <CardHeader>
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -497,21 +704,41 @@ export function AttendedAppointments() {
                   Attended Appointments
                 </CardTitle>
                 <p className="text-blue-600 text-sm md:text-base font-medium">
-                  View completed appointments with advanced filtering
+                  {role === 'staff' ? "Viewing today's completed appointments" : "View completed appointments with advanced filtering"}
                 </p>
               </div>
             </div>
-            {role !== "staff" && (
+            
+            {role !== "staff" ? (
               <div className="flex flex-col sm:flex-row gap-3">
                  <div className="flex items-center gap-2 bg-gradient-to-r from-teal-100 to-blue-100 px-4 py-2 rounded-xl shadow-sm">
                     <TrendingUp className="h-5 w-5 text-teal-600" />
                     <div className="text-right">
                       <div className="text-xs md:text-sm text-teal-700 font-semibold">Total Revenue</div>
                       <div className="text-base md:text-lg font-bold text-blue-900">
-                        ₹{getTotalAmount().toLocaleString()}
+                        {/* Use memoized value */}
+                        ₹{dprStats.totalRevenueToday.toLocaleString()}
                       </div>
                     </div>
                   </div>
+              </div>
+            ) : (
+              // --- "Send DPR" Button for staff ---
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Button
+                  onClick={handleSendDPR}
+                  disabled={isSendingDPR}
+                  className="bg-green-600 hover:bg-green-700 text-white font-semibold rounded-xl shadow-md flex items-center gap-2"
+                >
+                  {isSendingDPR ? (
+                    "Sending..."
+                  ) : (
+                    <>
+                      <Send className="h-4 w-4" />
+                      Send Today's DPR
+                    </>
+                  )}
+                </Button>
               </div>
             )}
           </div>
@@ -526,6 +753,7 @@ export function AttendedAppointments() {
                 className="pl-10 border-blue-200 focus:border-teal-400 focus:ring-teal-300 rounded-xl text-sm md:text-base bg-gradient-to-r from-white to-blue-50"
               />
             </div>
+            
             {role !== "staff" && (
               <div className="flex items-center gap-2">
                 <Filter className="h-4 w-4 text-blue-400" />
@@ -545,7 +773,7 @@ export function AttendedAppointments() {
               </div>
             )}
           </div>
-          {/* Advanced Date Filter Inputs */}
+          
           {role !== "staff" && (
             <div className="flex flex-wrap gap-4 mt-4">
               {dateFilter === "today" && (
@@ -638,12 +866,12 @@ export function AttendedAppointments() {
               )}
             </div>
           )}
-          {/* Filter Summary */}
-          {role !== "staff" && dateFilter !== "all" && (
+
+          {(role === "staff" || (role !== "admin" && dateFilter !== "all")) && (
             <div className="mt-2 p-3 bg-gradient-to-r from-teal-50 to-blue-50 rounded-xl border border-blue-100">
               <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2">
                 <div className="text-xs md:text-sm text-blue-700">
-                    <strong>Active Filter:</strong> {getFilterDisplay(dateFilter, filterDateInfo)}
+                    <strong>Active Filter:</strong> {getFilterDisplay(role === 'staff' ? 'today' : dateFilter, filterDateInfo)}
                 </div>
                 <div className="text-xs md:text-sm font-medium text-blue-600">
                   {filteredAppointments.length} appointment(s) found
